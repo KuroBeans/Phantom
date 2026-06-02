@@ -1,0 +1,326 @@
+// recon.src | netmap + proxy
+// netmap.src  |  phantom module  |  LAN reconnaissance
+
+NetMap = function()
+    if typeof(object) == "shell" then
+        rcomp = object.host_computer
+        pubIp = rcomp.public_ip
+    else if typeof(object) == "computer" then
+        rcomp = object
+        pubIp = rcomp.public_ip
+    else
+        print(c.yellow + "<b>netmap: not holding remote shell or computer" + c.ennd)
+        return
+    end if
+
+    // try getting router from public IP first, then local IP
+    router = get_router(pubIp)
+    if not router then router = get_router(rcomp.local_ip)
+    if not router then
+        print(c.yellow + "<b>netmap: could not reach target router" + c.ennd)
+        return
+    end if
+
+    devices = router.devices_lan_ip
+    if not devices or devices.len == 0 then
+        print(c.yellow + "<b>netmap: no LAN devices found" + c.ennd)
+        return
+    end if
+
+    print(char(10) + c.cyan + "<b>NETMAP  " + rcomp.public_ip + c.ennd)
+    print(c.grey + "router kernel: " + router.kernel_version + c.ennd)
+    print(c.grey + "firewall rules: " + router.firewall_rules + c.ennd)
+    print(c.grey + "devices found: " + devices.len + c.ennd)
+    print(c.grey + "----------------------------------------------------------------" + c.ennd)
+
+    for lanIp in devices
+        tag = ""
+        if lanIp == rcomp.local_ip then tag = c.gold + "  ← current target" + c.ennd
+
+        print(char(10) + c.gold + "<b>" + lanIp + "</b>" + c.ennd + tag)
+
+        ports = router.device_ports(lanIp)
+        if not ports or ports.len == 0 then
+            print(c.grey + "  no open ports" + c.ennd)
+            continue
+        end if
+
+        // build port table
+        info = "  PORT STATE SERVICE VERSION"
+        for p in ports
+            svc   = router.port_info(p)
+            state = "open"
+            if p.is_closed then state = "closed"
+            info = info + char(10) + "  " + p.port_number + " " + state + " " + svc
+        end for
+        print(format_columns(info))
+
+        // check if exploitable — only try open ports
+        vulnFound = false
+        for p in ports
+            if vulnFound then break
+            if p.is_closed then continue
+            ns = metaxploit.net_use(lanIp, p.port_number)
+            if not ns then continue
+            ml = ns.dump_lib
+            if not ml then continue
+            patched = ml.is_patched
+            if patched then
+                print(c.grey + "  lib: " + ml.lib_name + " " + ml.version + "  [patched]" + c.ennd)
+                continue
+            end if
+            mems = metaxploit.scan(ml)
+            if mems and mems.len > 0 then
+                print(c.lime + "  lib: " + ml.lib_name + " " + ml.version + "  [" + mems.len + " vuln(s) found]" + c.ennd)
+                for mem in mems
+                    addrs = metaxploit.scan_address(ml, mem).split("Unsafe check: ")
+                    for addr in addrs
+                        if addr == addrs[0] then continue
+                        val = addr[addr.indexOf("<b>") + 3 : addr.indexOf("</b>")]
+                        print(c.orange + "    " + mem + "  " + val + c.ennd)
+                    end for
+                end for
+                vulnFound = true
+            else
+                print(c.grey + "  lib: " + ml.lib_name + " " + ml.version + "  [no vulns]" + c.ennd)
+            end if
+        end for
+    end for
+
+    print(char(10) + c.grey + "----------------------------------------------------------------" + c.ennd)
+    print(c.cyan + "netmap complete" + c.ennd)
+end function
+// proxy.src  |  phantom module  |  auto proxy chain builder
+
+Proxy = function(hops)
+    if typeof(hops) != "number" or hops < 1 then hops = 1
+    print(char(10) + c.cyan + "<b>PROXY CHAIN  building " + hops + " hop(s)..." + c.ennd)
+    print(c.grey + "----------------------------------------------------------------" + c.ennd)
+
+    chain = []
+    attempts = 0
+    maxAttempts = hops * 20
+
+    while chain.len < hops and attempts < maxAttempts
+        attempts = attempts + 1
+
+        // generate random ip
+        a = floor(rnd * 256)
+        b = floor(rnd * 256)
+        d = floor(rnd * 256)
+        e = floor(rnd * 256)
+        ip = a + "." + b + "." + d + "." + e
+
+        if not is_valid_ip(ip) then continue
+        if is_lan_ip(ip) then continue
+
+        print(c.grey + "  [" + chain.len + "/" + hops + "] trying " + ip + " ..." + c.ennd, 1)
+
+        // get router on port 0
+        router = get_router(ip)
+        if not router then continue
+
+        ns = metaxploit.net_use(ip, 0)
+        if not ns then continue
+
+        ml = ns.dump_lib
+        if not ml then continue
+        if ml.is_patched then continue
+
+        mems = metaxploit.scan(ml)
+        if not mems then continue
+
+        // try each exploit
+        shell = null
+        for mem in mems
+            if shell then break
+            addrs = metaxploit.scan_address(ml, mem).split("Unsafe check: ")
+            for addr in addrs
+                if shell then break
+                if addr == addrs[0] then continue
+                val = addr[addr.indexOf("<b>") + 3 : addr.indexOf("</b>")]
+                obj = ml.overflow(mem, val)
+                if typeof(obj) == "shell" then
+                    shell = obj
+                else if typeof(obj) == "computer" then
+                    shell = obj
+                end if
+            end for
+        end for
+
+        if not shell then continue
+
+        // got a shell — add to chain
+        if typeof(shell) == "shell" then
+            chainIp = shell.host_computer.public_ip
+        else
+            chainIp = shell.public_ip
+        end if
+
+        chain.push(shell)
+        print(c.green + "  [" + chain.len + "/" + hops + "] hop " + chain.len + ": " + c.gold + chainIp + c.ennd)
+    end while
+
+    if chain.len == 0 then
+        print(c.yellow + "<b>proxy: could not find any exploitable routers" + c.ennd)
+        return
+    end if
+
+    if chain.len < hops then
+        print(c.yellow + "proxy: only found " + chain.len + "/" + hops + " hops" + c.ennd)
+    end if
+
+    // store chain in gco
+    gco.proxyChain = chain
+    gco.proxyDepth = chain.len
+
+    // set last hop as active object
+    globals.object = chain[chain.len - 1]
+    globals.remotePath = "/"
+
+    // print chain summary
+    print(char(10) + c.cyan + "proxy chain established:" + c.ennd)
+    print(c.grey + "  you" + c.ennd)
+    i = 0
+    for hop in chain
+        if typeof(hop) == "shell" then hopIp = hop.host_computer.public_ip
+        if typeof(hop) == "computer" then hopIp = hop.public_ip
+        print(c.grey + "   └─ " + c.ennd + c.gold + "hop " + (i + 1) + " : " + hopIp + c.ennd)
+        i = i + 1
+    end for
+    print(c.grey + "   └─ " + c.ennd + c.orange + "target" + c.ennd)
+    print(char(10) + c.green + "<b>proxy: active object set to hop " + chain.len + c.ennd)
+    print(c.grey + "  attacks and scans now route through the chain" + c.ennd)
+    gco.proxyReady = true
+end function
+
+ProxyStatus = function()
+    if not gco.hasIndex("proxyChain") or not gco.proxyChain or gco.proxyChain.len == 0 then
+        print(c.yellow + "no proxy chain active" + c.ennd)
+        return
+    end if
+    print(c.cyan + "current proxy chain:" + c.ennd)
+    print(c.grey + "  you" + c.ennd)
+    i = 0
+    for hop in gco.proxyChain
+        if typeof(hop) == "shell" then hopIp = hop.host_computer.public_ip
+        if typeof(hop) == "computer" then hopIp = hop.public_ip
+        print(c.grey + "   └─ " + c.ennd + c.gold + "hop " + (i + 1) + " : " + hopIp + c.ennd)
+        i = i + 1
+    end for
+    print(c.grey + "   └─ " + c.ennd + c.orange + "target" + c.ennd)
+end function
+
+ProxyClear = function()
+    gco.proxyChain = null
+    gco.proxyDepth = 0
+    globals.object = null
+    globals.remotePath = "/"
+    print(c.cyan + "proxy chain cleared" + c.ennd)
+end function
+// hacklan.src  |  phantom module  |  LAN bounce using jump technique
+// copies YOUR metaxploit to target, scans target libs, bounces to LAN IP
+
+HackLan = function(lanIp)
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>hacklan: not holding remote shell" + c.ennd)
+        return
+    end if
+    if not is_valid_ip(lanIp) then
+        print(c.yellow + "<b>hacklan: invalid LAN ip: " + lanIp + c.ennd)
+        return
+    end if
+
+    rcomp = object.host_computer
+
+    // jump — copy our metaxploit to target
+    print(c.orange + "Jumping metaxploit to target..." + c.ennd)
+    me = get_shell
+    me.scp(currentPath + "/metaxploit.so", "/home/guest", object)
+    mxCheck = rcomp.File("/home/guest/metaxploit.so")
+    if not mxCheck then
+        print(c.yellow + "<b>hacklan: metaxploit upload failed" + c.ennd)
+        return
+    end if
+
+    // write scanner that uses OUR metaxploit to scan target libs
+    print(c.orange + "Writing scanner to target..." + c.ennd)
+    rcomp.touch("/home/guest", "hlx.src")
+    srcFile = rcomp.File("/home/guest/hlx.src")
+    if not srcFile then
+        print(c.yellow + "<b>hacklan: could not write script" + c.ennd)
+        return
+    end if
+
+    q = char(34)
+    n = char(10)
+    src = "gco = get_custom_object" + n
+    src = src + "selfPath = program_path.split(char(47))[:-1].join(char(47))" + n
+    src = src + "metaxploit = include_lib(selfPath + char(47) + " + q + "metaxploit.so" + q + ")" + n
+    src = src + "if not metaxploit then exit(" + q + "no metaxploit" + q + ")" + n
+    src = src + "libDir = get_shell.host_computer.File(" + q + "/lib" + q + ")" + n
+    src = src + "if not libDir then exit(" + q + "no /lib" + q + ")" + n
+    src = src + "libs = libDir.get_files" + n
+    src = src + "if not libs then exit(" + q + "no libs" + q + ")" + n
+    src = src + "lanIp = gco.hlLanIp" + n
+    src = src + "for lib in libs" + n
+    src = src + "  if not lib.is_binary then continue" + n
+    src = src + "  ml = metaxploit.load(" + q + "/lib/" + q + " + lib.name)" + n
+    src = src + "  if not ml then continue" + n
+    src = src + "  if ml.is_patched then continue" + n
+    src = src + "  mems = metaxploit.scan(ml)" + n
+    src = src + "  if not mems then continue" + n
+    src = src + "  for mem in mems" + n
+    src = src + "    addrs = metaxploit.scan_address(ml, mem).split(" + q + "Unsafe check: " + q + ")" + n
+    src = src + "    for addr in addrs" + n
+    src = src + "      if addr == addrs[0] then continue" + n
+    src = src + "      val = addr[addr.indexOf(" + q + "<b>" + q + ") + 3 : addr.indexOf(" + q + "</b>" + q + ")]" + n
+    src = src + "      obj = ml.overflow(mem, val, lanIp)" + n
+    src = src + "      if typeof(obj) == " + q + "computer" + q + " or typeof(obj) == " + q + "shell" + q + " then" + n
+    src = src + "        gco.hlFound = lib.name + " + q + "|" + q + " + mem + " + q + "|" + q + " + val + " + q + "|" + q + " + typeof(obj)" + n
+    src = src + "        gco.hlResult = obj" + n
+    src = src + "        exit" + n
+    src = src + "      end if" + n
+    src = src + "    end for" + n
+    src = src + "  end for" + n
+    src = src + "end for" + n
+
+    srcFile.set_content(src)
+
+    print(c.orange + "Building on target..." + c.ennd)
+    object.build("/home/guest/hlx.src", "/home/guest", false)
+    binFile = rcomp.File("/home/guest/hlx")
+    if not binFile then
+        print(c.yellow + "<b>hacklan: build failed" + c.ennd)
+        srcFile.delete
+        mxCheck.delete
+        return
+    end if
+
+    gco.hlLanIp = lanIp
+    gco.hlFound = null
+    gco.hlResult = null
+    print(c.orange + "Scanning target libs for bounce to " + lanIp + " ..." + c.ennd)
+    object.launch("/home/guest/hlx")
+
+    // cleanup
+    srcFile.delete
+    binFile.delete
+    mxCheck.delete
+
+    if not gco.hlFound or gco.hlFound == "" then
+        print(c.yellow + "<b>hacklan: no bounce found for " + lanIp + c.ennd)
+        return
+    end if
+
+    parts = gco.hlFound.split("|")
+    print(c.green + "  [+] " + parts[3] + " on " + lanIp + c.ennd)
+    print(c.grey + "  " + parts[0] + "  " + parts[1] + "  " + parts[2] + c.ennd)
+
+    if gco.hlResult then
+        globals.object = gco.hlResult
+        globals.remotePath = "/"
+        GETPERMS(globals.object)
+        print(c.green + "<b>hacklan: object set" + c.ennd)
+    end if
+end function
