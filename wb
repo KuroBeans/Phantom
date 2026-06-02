@@ -1,0 +1,48 @@
+// wb.src  |  weaklib bounce helper  |  runs ON target router
+gco = get_custom_object
+selfPath = program_path.split("/")[:-1].join("/")
+
+metaxploit = include_lib(selfPath + "/metaxploit.so")
+if not metaxploit then metaxploit = include_lib("/lib/metaxploit.so")
+if not metaxploit then exit("wb: metaxploit not found")
+
+ml = metaxploit.load("/lib/libhttp.so")
+if not ml then exit("wb: libhttp.so not found in /lib")
+
+results = []
+for lanIp in params
+    obj = ml.overflow("0x1F000FB5", "length", lanIp)
+    if typeof(obj) != "computer" then continue
+    homeDir = obj.File("/home")
+    if not homeDir then continue
+    users = homeDir.get_folders
+    if not users then continue
+    for user in users
+        if user.name == "guest" then continue
+        for target in ["Mail.txt", "Bank.txt"]
+            hf = obj.File("/home/" + user.name + "/Config/" + target)
+            if not hf then continue
+            content = hf.get_content
+            if not content or content == "" then continue
+            for line in content.split(char(10))
+                if line != "" then results.push(lanIp + "|" + user.name + "|" + target + "|" + line)
+            end for
+        end for
+    end for
+    // corrupt log
+    obj.touch("/home/guest", "system.log")
+    tmp = obj.File("/home/guest/system.log")
+    if tmp then
+        tmp.move("/var", "system.log")
+        lf = obj.File("/var/system.log")
+        if lf and not lf.is_binary then
+            lf.set_owner("root")
+            lf.set_group("root")
+            lf.chmod("o-w")
+            lf.chmod("g-w")
+        end if
+    end if
+end for
+
+gco.wbResults = results.join(char(10))
+gco.wbCount = results.len
