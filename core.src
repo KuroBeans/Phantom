@@ -1,0 +1,556 @@
+// ops.src | cover + harvest
+// cover.src  |  phantom module  |  stealth + rshell
+
+// ── Cover ────────────────────────────────────────────────────────
+Cover = function()
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>cover: not holding remote shell" + c.ennd)
+        return
+    end if
+    comp = object.host_computer
+    print(c.orange + "Running cover..." + c.ennd)
+
+    // 1. corrupt remote system.log
+    ans = ""
+    while ans != "y" and ans != "n"
+        ans = user_input(c.yellow + "Corrupt remote system.log? (y/n): " + c.ennd)
+    end while
+    if ans == "y" then
+        test = comp.touch("/home/guest", "system.log")
+        if test != false then
+            f = comp.File("/home/guest/system.log")
+            if f then
+                res = f.move("/var", "system.log")
+                if res != "permission denied" then
+                    lf = comp.File("/var/system.log")
+                    if lf and not lf.is_binary then
+                        lf.set_owner("root")
+                        lf.set_group("root")
+                        lf.chmod("o-w")
+                        lf.chmod("g-w")
+                        print(c.green + "  [+] system.log corrupted" + c.ennd)
+                    end if
+                else
+                    print(c.yellow + "  [-] system.log: permission denied" + c.ennd)
+                end if
+            end if
+        end if
+    end if
+
+    // 2. wipe uploaded files
+    print(c.orange + "  Cleaning uploaded files..." + c.ennd)
+    cleanPaths = ["/home/guest/ar", "/home/guest/ls", "/tmp/ar", "/tmp/ls", "/root/ar", "/root/ls"]
+    for path in cleanPaths
+        f = comp.File(path)
+        if f then
+            f.delete
+            print(c.green + "  [+] deleted: " + path + c.ennd)
+        end if
+    end for
+
+    // wipe rt folders
+    rtPaths = ["/home/guest/rt", "/tmp/rt", "/root/rt"]
+    for path in rtPaths
+        d = comp.File(path)
+        if d then
+            files = d.get_files
+            if files then
+                for f in files
+                    f.delete
+                end for
+            end if
+            d.delete
+            print(c.green + "  [+] deleted: " + path + c.ennd)
+        end if
+    end for
+
+    // 3. corrupt local system.log
+    ans2 = ""
+    while ans2 != "y" and ans2 != "n"
+        ans2 = user_input(c.yellow + "Corrupt LOCAL system.log? (y/n): " + c.ennd)
+    end while
+    if ans2 == "y" then
+        test = myComp.touch("/home/guest", "system.log")
+        if test != false then
+            f = myComp.File("/home/guest/system.log")
+            if f then
+                res = f.move("/var", "system.log")
+                if res != "permission denied" then
+                    lf = myComp.File("/var/system.log")
+                    if lf and not lf.is_binary then
+                        lf.set_owner("root")
+                        lf.set_group("root")
+                        lf.chmod("o-w")
+                        lf.chmod("g-w")
+                        print(c.green + "  [+] local system.log corrupted" + c.ennd)
+                    end if
+                end if
+            end if
+        end if
+    end if
+
+    // 4. drop remote shell
+    ans3 = ""
+    while ans3 != "y" and ans3 != "n"
+        ans3 = user_input(c.yellow + "Drop remote shell? (y/n): " + c.ennd)
+    end while
+    if ans3 == "y" then
+        globals.object = null
+        globals.remotePath = "/"
+        print(c.green + "  [+] remote shell dropped" + c.ennd)
+    end if
+
+    print(c.green + "<b>cover complete" + c.ennd)
+end function
+
+// ── RShell ───────────────────────────────────────────────────────
+RShell = function(args)
+    cmd = ""
+    if args.len > 0 then cmd = args[0]
+
+    // rshell — poll for connections exactly like rshell-interface
+    if cmd == "" then
+        if not gco.hasIndex("rshellServer") or not gco.rshellServer then
+            print(c.yellow + "<b>rshell: no server configured — run rshell init first" + c.ennd)
+            return
+        end if
+        // need to be holding the server shell to poll
+        if typeof(object) != "shell" then
+            print(c.yellow + "<b>rshell: grab the server shell first, then run rshell" + c.ennd)
+            print(c.grey + "  server: " + gco.rshellServer + ":" + gco.rshellPort + c.ennd)
+            return
+        end if
+        if object.host_computer.public_ip != gco.rshellServer then
+            print(c.yellow + "<b>rshell: not holding server shell" + c.ennd)
+            print(c.grey + "  grab " + gco.rshellServer + " first, then run rshell" + c.ennd)
+            return
+        end if
+        // write rshell-interface script to server and run it
+        rcomp = object.host_computer
+        q = char(34)
+        n = char(10)
+        rcomp.touch("/home/guest", "rsh.src")
+        sf = rcomp.File("/home/guest/rsh.src")
+        if not sf then
+            print(c.yellow + "<b>rshell: could not write script to server" + c.ennd)
+            return
+        end if
+        src = "metaxploit = include_lib(" + q + "/lib/metaxploit.so" + q + ")" + n
+        src = src + "if not metaxploit then exit(" + q + "no metaxploit" + q + ")" + n
+        src = src + "gco = get_custom_object" + n
+        src = src + "shells = []" + n
+        src = src + "while shells.len == 0" + n
+        src = src + "  shells = metaxploit.rshell_server" + n
+        src = src + "  if typeof(shells) == " + q + "string" + q + " then exit(shells)" + n
+        src = src + "  if shells.len == 0 then wait(2)" + n
+        src = src + "end while" + n
+        src = src + "gco.rshShells = shells" + n
+        sf.set_content(src)
+        print(c.orange + "Building shell catcher on server..." + c.ennd)
+        object.build("/home/guest/rsh.src", "/home/guest", false)
+        bf = rcomp.File("/home/guest/rsh")
+        if not bf then
+            print(c.yellow + "<b>rshell: build failed" + c.ennd)
+            sf.delete
+            return
+        end if
+        print(c.orange + "Waiting for incoming shells..." + c.ennd)
+        gco.rshShells = null
+        object.launch("/home/guest/rsh")
+        sf.delete
+        bf.delete
+        if not gco.rshShells or gco.rshShells.len == 0 then
+            print(c.yellow + "<b>rshell: no shells connected yet" + c.ennd)
+            return
+        end if
+        shells = gco.rshShells
+        print(c.green + shells.len + " shell(s) connected!" + c.ennd)
+        i = 1
+        for s in shells
+            pub  = s.host_computer.public_ip
+            lan  = s.host_computer.local_ip
+            name = s.host_computer.get_name
+            print(c.gold + "  [" + i + "]  " + c.white + name + c.ennd + "  pub:" + c.cyan + pub + c.ennd + "  lan:" + c.cyan + lan + c.ennd)
+            i = i + 1
+        end for
+        sel = ""
+        ok = false
+        while not ok
+            sel = user_input(c.cyan + "Select (1-" + shells.len + ") or q: " + c.ennd)
+            if sel == "q" then return
+            sel = sel.to_int
+            if typeof(sel) == "number" and sel >= 1 and sel <= shells.len then ok = true
+        end while
+        globals.object = shells[sel - 1]
+        globals.remotePath = "/"
+        print(c.green + "<b>rshell: shell set as active object" + c.ennd)
+        GETPERMS(globals.object)
+        return
+    end if
+
+    // rshell init — install rshelld on current remote shell
+    if cmd == "init" then
+        if typeof(object) != "shell" then
+            print(c.yellow + "<b>rshell init: not holding remote shell" + c.ennd)
+            return
+        end if
+        port = 1222
+        if args.len >= 2 then port = args[1].to_int
+        rcomp = object.host_computer
+        myPubIp = get_router.public_ip
+        if rcomp.public_ip == myPubIp then
+            print(c.yellow + "<b>rshell init: that's your own machine — grab a remote server first" + c.ennd)
+            return
+        end if
+        print(c.orange + "Installing rshell server on " + rcomp.public_ip + "..." + c.ennd)
+        me = get_shell
+        me.scp(currentPath + "/librshell.so", "/lib", object)
+        // run rshell-server script exactly as in-game
+        q = char(34)
+        n = char(10)
+        rcomp.touch("/home/guest", "rsi.src")
+        sf = rcomp.File("/home/guest/rsi.src")
+        if not sf then
+            print(c.yellow + "<b>rshell init: could not write script" + c.ennd)
+            return
+        end if
+        src = "rshelld = include_lib(" + q + "/lib/librshell.so" + q + ")" + n
+        src = src + "if not rshelld then exit(" + q + "librshell.so not found" + q + ")" + n
+        src = src + "output = rshelld.install_service" + n
+        src = src + "if output != true then exit(output)" + n
+        src = src + "s = get_shell" + n
+        src = src + "svc = s.host_computer.File(" + q + "/server/rshelld" + q + ")" + n
+        src = src + "if not svc then svc = s.host_computer.File(" + q + "/etc/init.d/rshelld" + q + ")" + n
+        src = src + "if svc then s.launch(svc.path, " + q + "start" + q + ")" + n
+        sf.set_content(src)
+        object.build("/home/guest/rsi.src", "/home/guest", false)
+        bf = rcomp.File("/home/guest/rsi")
+        if not bf then
+            print(c.yellow + "<b>rshell init: build failed" + c.ennd)
+            sf.delete
+            return
+        end if
+        object.launch("/home/guest/rsi")
+        sf.delete
+        bf.delete
+        gco.rshellServer = rcomp.public_ip
+        gco.rshellPort   = port
+        print(c.green + "rshell: server ready on " + rcomp.public_ip + ":" + port + c.ennd)
+        print(c.grey + "  run rshell infect on targets to plant callback" + c.ennd)
+        return
+    end if
+
+    // rshell infect — plant rshell_client on current target
+    if cmd == "infect" then
+        if typeof(object) != "shell" then
+            print(c.yellow + "<b>rshell infect: not holding remote shell" + c.ennd)
+            return
+        end if
+        if gco.hasIndex("rshellServer") and gco.rshellServer then
+            serverIp = gco.rshellServer
+        else
+            print(c.yellow + "<b>rshell infect: no server configured — run rshell init first" + c.ennd)
+            return
+        end if
+        port = 1222
+        if gco.hasIndex("rshellPort") and gco.rshellPort then port = gco.rshellPort
+        procName = "rshell_client"
+        if args.len >= 2 then serverIp = args[1]
+        if args.len >= 3 then port = args[2].to_int
+        if args.len >= 4 then procName = args[3]
+        rcomp = object.host_computer
+        print(c.orange + "Infecting " + rcomp.public_ip + " → " + serverIp + ":" + port + " as '" + procName + "'..." + c.ennd)
+        // write rshell_client call to target — runs on target's metaxploit
+        q = char(34)
+        n = char(10)
+        rcomp.touch("/home/guest", "rsc.src")
+        sf = rcomp.File("/home/guest/rsc.src")
+        if not sf then
+            print(c.yellow + "<b>rshell infect: could not write script" + c.ennd)
+            return
+        end if
+        src = "metaxploit = include_lib(" + q + "/lib/metaxploit.so" + q + ")" + n
+        src = src + "if not metaxploit then exit(" + q + "no metaxploit" + q + ")" + n
+        src = src + "metaxploit.rshell_client(" + q + serverIp + q + ", " + port + ", " + q + procName + q + ")" + n
+        sf.set_content(src)
+        object.build("/home/guest/rsc.src", "/home/guest", false)
+        bf = rcomp.File("/home/guest/rsc")
+        if not bf then
+            print(c.yellow + "<b>rshell infect: build failed" + c.ennd)
+            sf.delete
+            return
+        end if
+        object.launch("/home/guest/rsc")
+        sf.delete
+        bf.delete
+        print(c.green + "rshell: client planted on " + rcomp.public_ip + c.ennd)
+        print(c.grey + "  grab server shell (" + serverIp + ") then run rshell to catch" + c.ennd)
+        return
+    end if
+
+    // rshell start — install and start rshelld locally
+    if cmd == "start" then
+        me = get_shell
+        comp = me.host_computer
+        rshelld = include_lib("/lib/librshell.so")
+        if not rshelld then rshelld = include_lib(currentPath + "/librshell.so")
+        if not rshelld then
+            print(c.yellow + "<b>rshell start: librshell.so not found" + c.ennd)
+            return
+        end if
+        svc = comp.File("/server/rshelld")
+        if not svc then svc = comp.File("/etc/init.d/rshelld")
+        if not svc then
+            output = rshelld.install_service
+            if output != true then
+                print(c.yellow + "<b>rshell start: " + output + c.ennd)
+                return
+            end if
+            svc = comp.File("/server/rshelld")
+            if not svc then svc = comp.File("/etc/init.d/rshelld")
+        end if
+        if svc then me.launch(svc.path, "start")
+        print(c.green + "rshell: rshelld started locally" + c.ennd)
+        return
+    end if
+
+    // rshell stop
+    if cmd == "stop" then
+        me = get_shell
+        comp = me.host_computer
+        svc = comp.File("/server/rshelld")
+        if not svc then svc = comp.File("/etc/init.d/rshelld")
+        if not svc then
+            print(c.yellow + "<b>rshell stop: rshelld not found" + c.ennd)
+            return
+        end if
+        me.launch(svc.path, "stop")
+        print(c.green + "rshell: rshelld stopped" + c.ennd)
+        return
+    end if
+
+    // rshell info
+    if cmd == "info" then
+        if gco.hasIndex("rshellServer") and gco.rshellServer then
+            print(c.cyan + "server: " + gco.rshellServer + ":" + gco.rshellPort + c.ennd)
+        else
+            print(c.yellow + "no server configured" + c.ennd)
+        end if
+        return
+    end if
+
+    print(c.grey + "rshell                       wait for shells (hold server shell first)" + c.ennd)
+    print(c.grey + "rshell init [port]           install rshelld on current remote shell" + c.ennd)
+    print(c.grey + "rshell infect [ip] [port]    plant rshell_client on current target" + c.ennd)
+    print(c.grey + "rshell start                 start rshelld locally" + c.ennd)
+    print(c.grey + "rshell stop                  stop rshelld locally" + c.ennd)
+    print(c.grey + "rshell info                  show server config" + c.ennd)
+end function
+// harvest.src  |  phantom module  |  filesystem intelligence gathering
+
+Harvest = function()
+    if typeof(object) == "shell" then
+        comp = object.host_computer
+    else if typeof(object) == "computer" then
+        comp = object
+    else
+        print(c.yellow + "<b>harvest: not holding remote shell or computer" + c.ennd)
+        return
+    end if
+
+    print(char(10) + c.cyan + "<b>HARVEST  " + comp.public_ip + c.ennd)
+    print(c.grey + "----------------------------------------------------------------" + c.ennd)
+
+    homeDir = comp.File("/home")
+    if not homeDir then
+        print(c.yellow + "<b>harvest: /home not found" + c.ennd)
+        return
+    end if
+
+    users = homeDir.get_folders
+    if not users or users.len == 0 then
+        print(c.yellow + "<b>harvest: no users found in /home" + c.ennd)
+        return
+    end if
+
+    targets = ["Mail.txt", "Bank.txt"]
+    cracked = 0
+    total   = 0
+
+    for user in users
+        userName = user.name
+        hasOutput = false
+        for target in targets
+            f = comp.File("/home/" + userName + "/Config/" + target)
+            if not f then continue
+            if not f.has_permission("r") then
+                if not hasOutput then
+                    print(c.gold + char(10) + "  " + userName + c.ennd)
+                    hasOutput = true
+                end if
+                print(c.grey + "    " + target + "  [no read]" + c.ennd)
+                continue
+            end if
+            content = f.get_content
+            if not content or content == "" then continue
+            if not hasOutput then
+                print(c.gold + char(10) + "  " + userName + c.ennd)
+                hasOutput = true
+            end if
+            print(c.orange + "    " + target + c.ennd)
+            lines = content.split(char(10))
+            for line in lines
+                if line == "" then continue
+                parts = line.split(":")
+                if parts.len < 2 then
+                    print(c.grey + "      " + line + c.ennd)
+                    continue
+                end if
+                user2 = parts[0]
+                hash  = parts[1]
+                total = total + 1
+                pw = CrackHash(hash)
+                if pw then
+                    print(c.lime + "      " + user2 + c.ennd + c.grey + " : " + c.ennd + c.gold + "<b>" + pw + c.ennd)
+                    cracked = cracked + 1
+                else
+                    print(c.white + "      " + user2 + c.ennd + c.grey + " : " + c.ennd + c.red + "not found  " + c.grey + "[" + hash[:12] + "...]" + c.ennd)
+                end if
+            end for
+        end for
+    end for
+
+    print(char(10) + c.grey + "----------------------------------------------------------------" + c.ennd)
+    print(c.cyan + "harvest complete — cracked " + cracked + "/" + total + " hashes" + c.ennd)
+end function
+// wifi.src  |  phantom module  |  wifi cracker
+
+WiFiCrack = function()
+    comp = myComp
+
+    // check for wifi interface
+    devices = comp.network_devices
+    if not devices then
+        print(c.yellow + "<b>wifi: no network devices found" + c.ennd)
+        return
+    end if
+
+    wifiInterface = null
+    for line in devices.split(char(10))
+        if line.indexOf("wlan") != null or line.indexOf("wifi") != null then
+            wifiInterface = line.split(" ")[0]
+            break
+        end if
+    end for
+
+    if not wifiInterface then
+        print(c.yellow + "<b>wifi: no WiFi interface found — need a wireless card" + c.ennd)
+        return
+    end if
+
+    print(c.cyan + "  interface: " + c.gold + wifiInterface + c.ennd)
+
+    // enable monitor mode
+    print(c.orange + "Enabling monitor mode..." + c.ennd)
+    monResult = gco.crypto.airmon("start", wifiInterface)
+    if typeof(monResult) == "string" then
+        print(c.yellow + "<b>wifi: monitor mode failed: " + monResult + c.ennd)
+        return
+    end if
+    print(c.green + "  monitor mode enabled" + c.ennd)
+
+    // scan for networks
+    print(c.orange + "Scanning for networks..." + c.ennd)
+    networks = comp.wifi_networks(wifiInterface)
+    if not networks or networks.len == 0 then
+        print(c.yellow + "<b>wifi: no networks found" + c.ennd)
+        gco.crypto.airmon("stop", wifiInterface)
+        return
+    end if
+
+    // display networks
+    print(char(10) + c.cyan + "<b>Available networks:" + c.ennd)
+    i = 0
+    for net in networks
+        parts = net.split(" ")
+        if parts.len < 3 then continue
+        bssid = parts[0]
+        pwr   = parts[1]
+        essid = parts[2]
+        print(c.gold + "  [" + i + "] " + c.ennd + c.white + "<b>" + essid + "</b>" + c.ennd + c.grey + "  " + bssid + "  PWR:" + pwr + c.ennd)
+        i = i + 1
+    end for
+
+    // select network
+    choiceStr = user_input(c.cyan + char(10) + "Select network: " + c.ennd)
+    idx = choiceStr.to_int
+    if typeof(idx) != "number" or idx < 0 or idx >= networks.len then
+        print(c.yellow + "<b>wifi: invalid selection" + c.ennd)
+        gco.crypto.airmon("stop", wifiInterface)
+        return
+    end if
+
+    selected = networks[idx].split(" ")
+    bssid    = selected[0]
+    pwrStr   = selected[1].replace("%", "")
+    essid    = selected[2]
+    pwr      = pwrStr.to_int
+    if not pwr or pwr <= 0 then pwr = 50
+
+    acksNeeded = floor(300000 / (pwr + 15))
+
+    print(char(10) + c.orange + "Targeting: " + c.pink + essid + c.ennd)
+    print(c.grey + "  BSSID: " + bssid + "  Signal: " + pwr + "%" + c.ennd)
+    print(c.orange + "  Sending ~" + acksNeeded + " ACKs..." + c.ennd)
+
+    // aireplay
+    aireplayResult = gco.crypto.aireplay(bssid, essid, acksNeeded)
+    if aireplayResult then print(c.grey + "  aireplay: " + aireplayResult + c.ennd)
+
+    // aircrack — pass the .cap file path
+    capFile = currentPath + "/file.cap"
+    print(c.orange + "Running aircrack on " + capFile + "..." + c.ennd)
+    capFileObj = comp.File(capFile)
+    if not capFileObj then
+        print(c.yellow + "<b>wifi: cap file not found at " + capFile + c.ennd)
+        gco.crypto.airmon("stop", wifiInterface)
+        return
+    end if
+    if not capFileObj.is_binary then
+        print(c.yellow + "<b>wifi: invalid cap file" + c.ennd)
+        gco.crypto.airmon("stop", wifiInterface)
+        return
+    end if
+    password = gco.crypto.aircrack(capFileObj.path)
+
+    if password and password.len > 0 then
+        div
+        print(c.green + "<b>CRACK SUCCESSFUL!" + c.ennd)
+        print(c.gold + "  network : " + essid + c.ennd)
+        print(c.gold + "  password: " + c.lime + "<b>" + password + c.ennd)
+        div
+
+        // offer to connect
+        ans = user_input(c.cyan + "Connect to " + essid + " now? (y/n): " + c.ennd)
+        if ans == "y" then
+            print(c.orange + "Connecting..." + c.ennd)
+            result = comp.connect_wifi(wifiInterface, bssid, essid, password)
+            if result == 1 then
+                print(c.green + "  connected to " + essid + "!" + c.ennd)
+                // set as local target for further attacks
+                globals.localTarget = bssid
+                print(c.grey + "  local target set to " + bssid + c.ennd)
+            else
+                print(c.yellow + "<b>wifi: connect failed: " + result + c.ennd)
+            end if
+        end if
+    else
+        print(c.yellow + "<b>wifi: crack failed" + c.ennd)
+        print(c.grey + "  tips: move closer for better signal, or try again" + c.ennd)
+    end if
+
+    // cleanup
+    print(c.orange + "Stopping monitor mode..." + c.ennd)
+    gco.crypto.airmon("stop", wifiInterface)
+    print(c.green + "wifi: done" + c.ennd)
+end function
