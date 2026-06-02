@@ -1,0 +1,525 @@
+// weaklib.src  |  phantom module  |  libhttp.so bounce + harvest across LAN
+
+WStack = function()
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>wstack: not holding remote shell" + c.ennd)
+        return
+    end if
+    rcomp = object.host_computer
+    pubIp = rcomp.public_ip
+    lanIp = rcomp.local_ip
+
+    print(c.orange + "Enumerating LAN..." + c.ennd)
+    router = get_router(pubIp)
+    if not router then
+        print(c.yellow + "<b>wstack: could not reach router" + c.ennd)
+        return
+    end if
+    devices = router.devices_lan_ip
+    if not devices or devices.len == 0 then
+        print(c.yellow + "<b>wstack: no LAN devices found" + c.ennd)
+        return
+    end if
+
+    lanTargets = []
+    for ip in devices
+        if ip != lanIp then lanTargets.push(ip)
+    end for
+
+    if lanTargets.len == 0 then
+        print(c.yellow + "<b>wstack: no other LAN devices" + c.ennd)
+        return
+    end if
+    print(c.cyan + "  found " + lanTargets.len + " target(s): " + lanTargets.join(", ") + c.ennd)
+
+    // upload metaxploit + write bounce script
+    print(c.orange + "Uploading tools..." + c.ennd)
+    me = get_shell
+    me.scp(currentPath + "/metaxploit.so", "/home/guest", object)
+
+    rcomp.touch("/home/guest", "wsx.src")
+    srcFile = rcomp.File("/home/guest/wsx.src")
+    if not srcFile then
+        print(c.yellow + "<b>wstack: could not write script" + c.ennd)
+        return
+    end if
+
+    q = char(34)
+    n = char(10)
+    src = "gco = get_custom_object" + n
+    src = src + "selfPath = program_path.split(char(47))[:-1].join(char(47))" + n
+    src = src + "metaxploit = include_lib(selfPath + char(47) + " + q + "metaxploit.so" + q + ")" + n
+    src = src + "if not metaxploit then metaxploit = include_lib(" + q + "/lib/metaxploit.so" + q + ")" + n
+    src = src + "if not metaxploit then exit(" + q + "no meta" + q + ")" + n
+    src = src + "ml = metaxploit.load(" + q + "/lib/libhttp.so" + q + ")" + n
+    src = src + "if not ml then exit(" + q + "no libhttp" + q + ")" + n
+    src = src + "objs = []" + n
+    src = src + "ips = gco.wsIPs.split(" + q + "," + q + ")" + n
+    src = src + "for lanIp in ips" + n
+    src = src + "  obj = ml.overflow(" + q + "0x1F000FB5" + q + ", " + q + "length" + q + ", lanIp)" + n
+    src = src + "  if typeof(obj) == " + q + "computer" + q + " then objs.push(obj)" + n
+    src = src + "end for" + n
+    src = src + "gco.wsObjects = objs" + n
+    src = src + "gco.wsCount = objs.len" + n
+
+    srcFile.set_content(src)
+    print(c.orange + "Building on target..." + c.ennd)
+    object.build("/home/guest/wsx.src", "/home/guest", false)
+    binFile = rcomp.File("/home/guest/wsx")
+    if not binFile then
+        print(c.yellow + "<b>wstack: build failed" + c.ennd)
+        srcFile.delete
+        mxf = rcomp.File("/home/guest/metaxploit.so")
+        if mxf then mxf.delete
+        return
+    end if
+
+    gco.wsIPs = lanTargets.join(",")
+    gco.wsObjects = null
+    gco.wsCount = 0
+    print(c.orange + "Bouncing to LAN devices..." + c.ennd)
+    object.launch("/home/guest/wsx")
+
+    // cleanup
+    srcFile.delete
+    binFile.delete
+    mxf = rcomp.File("/home/guest/metaxploit.so")
+    if mxf then mxf.delete
+
+    if not gco.wsObjects or gco.wsCount == 0 then
+        print(c.yellow + "<b>wstack: no objects obtained" + c.ennd)
+        return
+    end if
+
+    // push all obtained computers to stack + enumerate their LANs
+    pushed = 0
+    deepTargets = []
+    for obj in gco.wsObjects
+        if typeof(obj) != "computer" then continue
+        objectStack.push(obj)
+        pushed = pushed + 1
+        print(c.green + "  [+] pushed " + obj.local_ip + " pub:" + obj.public_ip + " → stack [" + objectStack.len + "]" + c.ennd)
+        // enumerate this computer's own routers for deeper LAN
+        routersToCheck = []
+        r1 = get_router(obj.public_ip)
+        r2 = get_router(obj.local_ip)
+        if r1 then routersToCheck.push(r1)
+        if r2 and r2 != r1 then routersToCheck.push(r2)
+        for subRouter in routersToCheck
+            subDevices = subRouter.devices_lan_ip
+            if subDevices then
+                for subIp in subDevices
+                    if subIp != obj.local_ip then
+                        deepTargets.push(subIp + " (via " + obj.local_ip + " router:" + subRouter.local_ip + ")")
+                    end if
+                end for
+            end if
+        end for
+    end for
+
+    div
+    print(c.cyan + "wstack complete — " + pushed + " computer(s) pushed to stack" + c.ennd)
+    if deepTargets.len > 0 then
+        print(c.gold + "  deep LAN targets discovered:" + c.ennd)
+        for dt in deepTargets
+            print(c.grey + "    " + dt + c.ennd)
+        end for
+    end if
+    print(c.grey + "  use stack/swap/pop to access" + c.ennd)
+end function
+
+WeakLib = function()
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>weaklib: not holding remote shell" + c.ennd)
+        return
+    end if
+    rcomp = object.host_computer
+    pubIp = rcomp.public_ip
+    lanIp = rcomp.local_ip
+
+    // enumerate LAN
+    print(c.orange + "Enumerating LAN..." + c.ennd)
+    router = get_router(pubIp)
+    if not router then
+        print(c.yellow + "<b>weaklib: could not reach router" + c.ennd)
+        return
+    end if
+    devices = router.devices_lan_ip
+    if not devices or devices.len == 0 then
+        print(c.yellow + "<b>weaklib: no LAN devices found" + c.ennd)
+        return
+    end if
+
+    lanTargets = []
+    for ip in devices
+        if ip != lanIp then lanTargets.push(ip)
+    end for
+
+    if lanTargets.len == 0 then
+        print(c.yellow + "<b>weaklib: no other LAN devices" + c.ennd)
+        return
+    end if
+    print(c.cyan + "  found " + lanTargets.len + " target(s): " + lanTargets.join(", ") + c.ennd)
+
+    // upload metaxploit.so to /home/guest for wbx to use
+    print(c.orange + "Uploading tools..." + c.ennd)
+    me = get_shell
+    me.scp(currentPath + "/metaxploit.so", "/home/guest", object)
+    me.scp(currentPath + "/wb", "/home/guest", object)
+
+    binFile = rcomp.File("/home/guest/wb")
+    if not binFile then
+        print(c.yellow + "<b>weaklib: wb upload failed" + c.ennd)
+        return
+    end if
+
+    // write harvest script to router using write-build-run
+    print(c.orange + "Writing harvest script to target..." + c.ennd)
+    rcomp.touch("/home/guest", "wbx.src")
+    srcFile = rcomp.File("/home/guest/wbx.src")
+    if not srcFile then
+        print(c.yellow + "<b>weaklib: could not write to /home/guest" + c.ennd)
+        return
+    end if
+
+    q = char(34)
+    n = char(10)
+    harvSrc = "gco = get_custom_object" + n
+    harvSrc = harvSrc + "selfPath = program_path.split(char(47))[:-1].join(char(47))" + n
+    harvSrc = harvSrc + "metaxploit = include_lib(selfPath + char(47) + " + q + "metaxploit.so" + q + ")" + n
+    harvSrc = harvSrc + "if not metaxploit then metaxploit = include_lib(" + q + "/lib/metaxploit.so" + q + ")" + n
+    harvSrc = harvSrc + "if not metaxploit then exit(" + q + "no meta" + q + ")" + n
+    harvSrc = harvSrc + "ml = metaxploit.load(" + q + "/lib/libhttp.so" + q + ")" + n
+    harvSrc = harvSrc + "if not ml then exit(" + q + "no libhttp" + q + ")" + n
+    harvSrc = harvSrc + "results = []" + n
+    harvSrc = harvSrc + "ips = gco.wbIPs.split(" + q + "," + q + ")" + n
+    harvSrc = harvSrc + "for lanIp in ips" + n
+    harvSrc = harvSrc + "  obj = ml.overflow(" + q + "0x1F000FB5" + q + ", " + q + "length" + q + ", lanIp)" + n
+    harvSrc = harvSrc + "  if typeof(obj) != " + q + "computer" + q + " then continue" + n
+    harvSrc = harvSrc + "  homeDir = obj.File(" + q + "/home" + q + ")" + n
+    harvSrc = harvSrc + "  if not homeDir then continue" + n
+    harvSrc = harvSrc + "  users = homeDir.get_folders" + n
+    harvSrc = harvSrc + "  if not users then continue" + n
+    harvSrc = harvSrc + "  for user in users" + n
+    harvSrc = harvSrc + "    if user.name == " + q + "guest" + q + " then continue" + n
+    harvSrc = harvSrc + "    for t in [" + q + "Mail.txt" + q + ", " + q + "Bank.txt" + q + "]" + n
+    harvSrc = harvSrc + "      hf = obj.File(" + q + "/home/" + q + " + user.name + " + q + "/Config/" + q + " + t)" + n
+    harvSrc = harvSrc + "      if not hf then continue" + n
+    harvSrc = harvSrc + "      content = hf.get_content" + n
+    harvSrc = harvSrc + "      if not content or content == " + q + q + " then continue" + n
+    harvSrc = harvSrc + "      for line in content.split(char(10))" + n
+    harvSrc = harvSrc + "        if line != " + q + q + " then results.push(lanIp + char(1) + user.name + char(1) + t + char(1) + line)" + n
+    harvSrc = harvSrc + "      end for" + n
+    harvSrc = harvSrc + "    end for" + n
+    harvSrc = harvSrc + "  end for" + n
+    harvSrc = harvSrc + "  obj.touch(" + q + "/home/guest" + q + ", " + q + "system.log" + q + ")" + n
+    harvSrc = harvSrc + "  tmp = obj.File(" + q + "/home/guest/system.log" + q + ")" + n
+    harvSrc = harvSrc + "  if tmp then" + n
+    harvSrc = harvSrc + "    tmp.move(" + q + "/var" + q + ", " + q + "system.log" + q + ")" + n
+    harvSrc = harvSrc + "    lf = obj.File(" + q + "/var/system.log" + q + ")" + n
+    harvSrc = harvSrc + "    if lf and not lf.is_binary then lf.set_owner(" + q + "root" + q + ")" + n
+    harvSrc = harvSrc + "  end if" + n
+    harvSrc = harvSrc + "end for" + n
+    harvSrc = harvSrc + "gco.wbResults = results.join(char(10))" + n
+    harvSrc = harvSrc + "gco.wbCount = results.len" + n
+
+    srcFile.set_content(harvSrc)
+    print(c.orange + "Building on target..." + c.ennd)
+    object.build("/home/guest/wbx.src", "/home/guest", false)
+    binFile2 = rcomp.File("/home/guest/wbx")
+    if not binFile2 then
+        print(c.yellow + "<b>weaklib: build failed on target" + c.ennd)
+        srcFile.delete
+        binFile.delete
+        mxf = rcomp.File("/home/guest/metaxploit.so")
+        if mxf then mxf.delete
+        return
+    end if
+
+    gco.wbIPs = lanTargets.join(",")
+    gco.wbResults = null
+    gco.wbCount = 0
+    print(c.orange + "Running harvest on target..." + c.ennd)
+    object.launch("/home/guest/wbx")
+
+    // cleanup
+    srcFile.delete
+    binFile2.delete
+    binFile.delete
+    mxf = rcomp.File("/home/guest/metaxploit.so")
+    if mxf then mxf.delete
+
+    print(c.grey + "  wb found " + gco.wbCount + " credential line(s)" + c.ennd)
+
+    if not gco.wbResults or gco.wbResults == "" then
+        print(c.yellow + "<b>weaklib: no credentials found" + c.ennd)
+        return
+    end if
+
+    // parse and decipher
+    totalCracked = 0
+    rlines = gco.wbResults.split(char(10))
+    for rline in rlines
+        if rline == "" then continue
+        rparts = rline.split(char(1))
+        if rparts.len < 4 then continue
+        bounceIp = rparts[0]
+        userName = rparts[1]
+        fileName = rparts[2]
+        hashLine = rparts[3]
+        hparts = hashLine.split(":")
+        if hparts.len < 2 then continue
+        pw = CrackHash(hparts[1])
+        if pw then
+            print(c.lime + "  " + hparts[0] + c.ennd + c.grey + " : " + c.ennd + c.gold + "<b>" + pw + c.ennd + c.grey + "  [" + bounceIp + "/" + userName + "/" + fileName + "]" + c.ennd)
+            totalCracked = totalCracked + 1
+        end if
+    end for
+
+    div
+    print(c.cyan + "weaklib complete — cracked " + totalCracked + "/" + gco.wbCount + " hashes across " + lanTargets.len + " device(s)" + c.ennd)
+
+    // enumerate each bounced computer's own router for deeper LAN discovery
+    print(c.orange + char(10) + "Enumerating deep LAN..." + c.ennd)
+    deepFound = 0
+    for bounceIp in lanTargets
+        ml = metaxploit.load("/lib/libhttp.so")
+        if not ml then continue
+        obj = ml.overflow("0x1F000FB5", "length", bounceIp)
+        if typeof(obj) != "computer" then continue
+
+        // try both public and local IP to find all routers this computer can see
+        routersToCheck = []
+        r1 = get_router(obj.public_ip)
+        r2 = get_router(obj.local_ip)
+        if r1 then routersToCheck.push(r1)
+        if r2 and r2 != r1 then routersToCheck.push(r2)
+
+        for subRouter in routersToCheck
+            subDevices = subRouter.devices_lan_ip
+            if not subDevices then continue
+            for subIp in subDevices
+                if subIp != obj.local_ip and subIp != bounceIp then
+                    print(c.grey + "  " + subIp + c.ennd + c.grey + " (via " + bounceIp + " router:" + subRouter.local_ip + " pub:" + obj.public_ip + ")" + c.ennd)
+                    deepFound = deepFound + 1
+                end if
+            end for
+        end for
+    end for
+    if deepFound > 0 then
+        print(c.gold + "  " + deepFound + " deep LAN target(s) discovered — use scan/grab to exploit" + c.ennd)
+    else
+        print(c.grey + "  no additional LAN targets found" + c.ennd)
+    end if
+end function
+// autoharvest.src  |  phantom module  |  fully automated attack loop
+// proxy -> scan -> grab -> autoroot -> harvest -> cover -> repeat
+
+AutoHarvest = function(hops, maxTargets)
+    if typeof(hops) != "number" or hops < 1 then hops = 1
+    if typeof(maxTargets) != "number" or maxTargets < 1 then maxTargets = 5
+
+    print(char(10) + c.cyan + "<b>AUTOHARVEST" + c.ennd)
+    print(c.grey + "  hops: " + hops + "  max targets: " + maxTargets + c.ennd)
+    print(c.grey + "----------------------------------------------------------------" + c.ennd)
+
+    totalCracked = 0
+    totalTargets = 0
+    attempts     = 0
+    maxAttempts  = maxTargets * 30
+
+    // make sure rt files exist
+    rtDir = myComp.File(currentPath + "/rt")
+    if not rtDir then
+        print(c.orange + "No rt folder — running rtgen first..." + c.ennd)
+        RTGen()
+    end if
+
+    while totalTargets < maxTargets and attempts < maxAttempts
+        attempts = attempts + 1
+        print(char(10) + c.orange + "── target " + (totalTargets + 1) + "/" + maxTargets + " ──────────────────────────────────────" + c.ennd)
+
+        // ── step 1: build proxy chain ──────────────────────────
+        print(c.grey + "  [1/5] building " + hops + " hop proxy chain..." + c.ennd)
+        chain = []
+        chainAttempts = 0
+        while chain.len < hops and chainAttempts < hops * 20
+            chainAttempts = chainAttempts + 1
+            a = floor(rnd * 256)
+            b = floor(rnd * 256)
+            d = floor(rnd * 256)
+            e = floor(rnd * 256)
+            ip = a + "." + b + "." + d + "." + e
+            if not is_valid_ip(ip) then continue
+            if is_lan_ip(ip) then continue
+            ns = metaxploit.net_use(ip, 0)
+            if not ns then continue
+            ml = ns.dump_lib
+            if not ml then continue
+            if ml.is_patched then continue
+            mems = metaxploit.scan(ml)
+            if not mems then continue
+            shell = null
+            for mem in mems
+                if shell then break
+                addrs = metaxploit.scan_address(ml, mem).split("Unsafe check: ")
+                for addr in addrs
+                    if shell then break
+                    if addr == addrs[0] then continue
+                    val = addr[addr.indexOf("<b>") + 3 : addr.indexOf("</b>")]
+                    obj = ml.overflow(mem, val)
+                    if typeof(obj) == "shell" or typeof(obj) == "computer" then shell = obj
+                end for
+            end for
+            if not shell then continue
+            chain.push(shell)
+        end while
+
+        if chain.len == 0 then
+            print(c.yellow + "  proxy: no hops found — skipping" + c.ennd)
+            continue
+        end if
+
+        // set last hop as active object
+        globals.object = chain[chain.len - 1]
+        globals.remotePath = "/"
+        if typeof(object) == "shell" then
+            proxyIp = object.host_computer.public_ip
+        else
+            proxyIp = object.public_ip
+        end if
+        print(c.green + "  proxy ready: " + chain.len + " hop(s) via " + proxyIp + c.ennd)
+
+        // ── step 2: find a target ──────────────────────────────
+        print(c.grey + "  [2/5] scanning for target..." + c.ennd)
+        targetShell = null
+        targetIp    = ""
+        scanAttempts = 0
+        while not targetShell and scanAttempts < 30
+            scanAttempts = scanAttempts + 1
+            a = floor(rnd * 256)
+            b = floor(rnd * 256)
+            d = floor(rnd * 256)
+            e = floor(rnd * 256)
+            ip = a + "." + b + "." + d + "." + e
+            if not is_valid_ip(ip) then continue
+            if is_lan_ip(ip) then continue
+            router = get_router(ip)
+            if not router then continue
+            ports = router.used_ports
+            if not ports or ports.len == 0 then continue
+            for p in ports
+                if targetShell then break
+                ns = metaxploit.net_use(ip, p.port_number)
+                if not ns then continue
+                ml = ns.dump_lib
+                if not ml then continue
+                if ml.is_patched then continue
+                mems = metaxploit.scan(ml)
+                if not mems then continue
+                for mem in mems
+                    if targetShell then break
+                    addrs = metaxploit.scan_address(ml, mem).split("Unsafe check: ")
+                    for addr in addrs
+                        if targetShell then break
+                        if addr == addrs[0] then continue
+                        val = addr[addr.indexOf("<b>") + 3 : addr.indexOf("</b>")]
+                        obj = ml.overflow(mem, val)
+                        if typeof(obj) == "shell" then
+                            targetShell = obj
+                            targetIp = ip
+                        end if
+                    end for
+                end for
+            end for
+        end while
+
+        if not targetShell then
+            print(c.yellow + "  no exploitable target found — skipping" + c.ennd)
+            globals.object = null
+            continue
+        end if
+
+        globals.object = targetShell
+        globals.remotePath = "/"
+        print(c.green + "  target: " + targetIp + c.ennd)
+
+        // ── step 3: autoroot ───────────────────────────────────
+        print(c.grey + "  [3/5] attempting autoroot..." + c.ennd)
+        globals.object = targetShell
+        globals.remotePath = "/"
+        AutoRoot(null, null, null)
+        rooted = typeof(object) == "shell"
+
+        if not rooted then
+            print(c.yellow + "  could not root " + targetIp + " — skipping" + c.ennd)
+            globals.object = null
+            continue
+        end if
+        print(c.green + "  rooted: " + targetIp + c.ennd)
+
+        // ── step 4: harvest ────────────────────────────────────
+        print(c.grey + "  [4/5] harvesting credentials..." + c.ennd)
+        rcomp = globals.object.host_computer
+        homeDir = rcomp.File("/home")
+        harvested = 0
+        if homeDir then
+            users = homeDir.get_folders
+            if users then
+                for user in users
+                    for target in ["Mail.txt", "Bank.txt"]
+                        hf = rcomp.File("/home/" + user.name + "/Config/" + target)
+                        if not hf then continue
+                        if not hf.has_permission("r") then continue
+                        content = hf.get_content
+                        if not content or content == "" then continue
+                        hlines = content.split(char(10))
+                        for hline in hlines
+                            if hline == "" then continue
+                            hparts = hline.split(":")
+                            if hparts.len < 2 then continue
+                            pw = CrackHash(hparts[1])
+                            if pw then
+                                print(c.lime + "    " + hparts[0] + c.ennd + c.grey + " : " + c.ennd + c.gold + "<b>" + pw + c.ennd + c.grey + "  [" + user.name + "/" + target + "]" + c.ennd)
+                                totalCracked = totalCracked + 1
+                                harvested = harvested + 1
+                            end if
+                        end for
+                    end for
+                end for
+            end if
+        end if
+        print(c.cyan + "  harvested " + harvested + " credential(s) from " + targetIp + c.ennd)
+
+        // ── step 5: cover ──────────────────────────────────────
+        print(c.grey + "  [5/5] covering tracks..." + c.ennd)
+        tcomp = globals.object.host_computer
+        test = tcomp.touch("/home/guest", "system.log")
+        if test != false then
+            lf2 = tcomp.File("/home/guest/system.log")
+            if lf2 then
+                res = lf2.move("/var", "system.log")
+                if res != "permission denied" then
+                    lf3 = tcomp.File("/var/system.log")
+                    if lf3 and not lf3.is_binary then
+                        lf3.set_owner("root")
+                        lf3.set_group("root")
+                        lf3.chmod("o-w")
+                        lf3.chmod("g-w")
+                        print(c.green + "  system.log corrupted" + c.ennd)
+                    end if
+                end if
+            end if
+        end if
+
+        globals.object = null
+        globals.remotePath = "/"
+        totalTargets = totalTargets + 1
+    end while
+
+    print(char(10) + c.grey + "================================================================" + c.ennd)
+    print(c.cyan + "<b>AUTOHARVEST COMPLETE" + c.ennd)
+    print(c.gold + "  targets hit  : " + totalTargets + c.ennd)
+    print(c.gold + "  creds cracked: " + totalCracked + c.ennd)
+    print(c.grey + "================================================================" + c.ennd)
+end function
