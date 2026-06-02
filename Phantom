@@ -1,0 +1,2484 @@
+// ================================================================
+//  PHANTOM  v1.2  |  Grey Hack Multi-Tool
+// ================================================================
+
+c = {}
+c.red    = "<color=#CC2222>"       // crimson
+c.orange = "<color=#D4621A>"       // burnt sienna
+c.yellow = "<color=#D4A017>"       // ochre
+c.green  = "<color=#4A7C59>"       // sage green
+c.cyan   = "<color=#2E86AB>"       // cerulean
+c.blue   = "<color=#1B3A8C>"       // cobalt blue
+c.purple = "<color=#4B0082>"       // indigo
+c.white  = "<color=#FFFFF0>"       // ivory
+c.grey   = "<color=#708090>"       // slate grey
+c.gold   = "<color=#FFB300>"       // amber
+c.lime   = "<color=#4CBB17>"       // viridian green
+c.pink   = "<color=#FF4081>"       // magenta
+c.teal   = "<color=#008080>"       // teal
+c.rust   = "<color=#B7410E>"       // rust
+c.copper = "<color=#B87333>"       // copper
+c.ennd   = "</color>"
+
+// ── Utility ──────────────────────────────────────────────────────
+div = function()
+    print(c.grey + "----------------------------------------------------------------" + c.ennd)
+end function
+
+Title = function()
+    clear_screen
+    r = [c.cyan, c.lime, c.pink, c.gold, c.purple, c.copper, c.teal, c.rust]
+    r.shuffle
+    a = r[0]
+    b = r[1]
+    print(char(10))
+    print(a+"<b>  ██████╗ ██╗  ██╗ █████╗ ███╗  ██╗████████╗ ██████╗ ███╗  ███╗"+c.ennd)
+    print(a+"<b>  ██╔══██╗██║  ██║██╔══██╗████╗ ██║╚══██╔══╝██╔═══██╗████╗████║"+c.ennd)
+    print(b+"<b>  ██████╔╝███████║███████║██╔██╗██║   ██║   ██║   ██║██╔████╔██║"+c.ennd)
+    print(b+"<b>  ██╔═══╝ ██╔══██║██╔══██║██║╚████║   ██║   ██║   ██║██║╚██╔╝██║"+c.ennd)
+    print(a+"<b>  ██║     ██║  ██║██║  ██║██║ ╚███║   ██║   ╚██████╔╝██║ ╚═╝ ██║"+c.ennd)
+    print(a+"<b>  ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚══╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝"+c.ennd)
+    print(c.grey+"                                              v1.2  by operator"+c.ennd)
+    print(char(10))
+end function
+
+GetFile = function(input, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    if input == "" then return null
+    if input[0] == "/" then return obj.File(input)
+    if local then
+        if myPath == "/" then return obj.File("/" + input)
+        return obj.File(myPath + "/" + input)
+    end if
+    if remotePath == "/" then return obj.File("/" + input)
+    return obj.File(remotePath + "/" + input)
+end function
+
+MemDump = function(fileObj)
+    if typeof(fileObj) != "file" then return null
+    result = []
+    queue = fileObj.get_folders + fileObj.get_files
+    while queue.len > 0
+        f = queue.pull
+        if f.is_folder then queue = queue + f.get_folders + f.get_files
+        result.push(f)
+    end while
+    return result
+end function
+
+GETPERMS = function(obj)
+    if typeof(obj) != "shell" and typeof(obj) != "computer" then
+        print(c.yellow + "<b>getperms: not a shell or computer object" + c.ennd)
+        return
+    end if
+    if typeof(obj) == "shell" then rhost = obj.host_computer
+    if typeof(obj) == "computer" then rhost = obj
+    targets = ["/var/system.log", "/etc/passwd", "/home/guest", "/var", "/etc"]
+    writes = ""
+    reads = ""
+    ok   = c.green + "<b>yes</b>" + c.ennd
+    deny = c.red   + "<b>no</b>"  + c.ennd
+    for path in targets
+        f = rhost.File(path)
+        if not f then continue
+        w = deny
+        r = deny
+        if f.has_permission("w") then w = ok
+        if f.has_permission("r") then r = ok
+        writes = writes + c.white + "<b>" + path + "</b>" + c.ennd + "  w:" + w + char(10)
+        reads  = reads  + c.white + "<b>" + path + "</b>" + c.ennd + "  r:" + r + char(10)
+    end for
+    print(c.yellow + "<b>write permissions" + char(10) + format_columns(writes))
+    print(c.yellow + "<b>read permissions"  + char(10) + format_columns(reads))
+end function
+
+// ── Random IP ────────────────────────────────────────────────────
+RandIp = function()
+    a = floor(rnd * 256)
+    b = floor(rnd * 256)
+    d = floor(rnd * 256)
+    e = floor(rnd * 256)
+    print(a + "." + b + "." + d + "." + e)
+end function
+
+// ── Nmap ─────────────────────────────────────────────────────────
+Nmap = function(ip, comp)
+    if ip == "pt" then ip = publicTarget
+    if ip == "lt" then ip = localTarget
+    if not is_valid_ip(ip) then
+        print(c.yellow + "<b>nmap: invalid ip" + c.ennd)
+        return
+    end if
+    if not comp.is_network_active then
+        print(c.yellow + "<b>nmap: no network" + c.ennd)
+        return
+    end if
+    lan = is_lan_ip(ip)
+    if lan then
+        router = get_router
+    else
+        router = get_router(ip)
+    end if
+    if not router then
+        print(c.yellow + "<b>nmap: host not found" + c.ennd)
+        return
+    end if
+    if lan then
+        ports = router.device_ports(ip)
+    else
+        ports = router.used_ports
+    end if
+    if not ports then
+        print(c.yellow + "<b>nmap: no ports returned" + c.ennd)
+        return
+    end if
+    print(char(10) + c.cyan + "nmap scan: " + ip + "  [" + current_date + "]" + c.ennd)
+    print(whois(ip))
+    print(c.grey + "kernel_router: " + router.kernel_version + c.ennd + char(10))
+    if typeof(ports) == "string" then
+        print(ports)
+        return
+    end if
+    info = "PORT STATE SERVICE VERSION LAN"
+    for p in ports
+        svc   = router.port_info(p)
+        lans  = p.get_lan_ip
+        state = "open"
+        if p.is_closed and not lan then state = "closed"
+        info = info + char(10) + p.port_number + " " + state + " " + svc + " " + lans
+    end for
+    print(format_columns(info) + char(10))
+    choice = ""
+    while choice != "y" and choice != "n"
+        choice = user_input(c.cyan + "Set " + ip + " as target? (y/n): " + c.ennd)
+    end while
+    if choice == "y" then SetTarget(ip, null)
+end function
+
+// ── Scan ─────────────────────────────────────────────────────────
+Scan = function(ip, port, comp, inject, libName)
+    if ip == "pt" then ip = publicTarget
+    if ip == "lt" then ip = localTarget
+    if ip == "-l" then
+        metalib = metaxploit.load(port)
+        if not metalib then
+            print(c.yellow + "<b>scan: lib not found: " + port + c.ennd)
+            return
+        end if
+    else
+        if not is_valid_ip(ip) then
+            print(c.yellow + "<b>scan: invalid ip" + c.ennd)
+            return
+        end if
+        portInt = port.to_int
+        if typeof(portInt) != "number" then
+            print(c.yellow + "<b>scan: invalid port" + c.ennd)
+            return
+        end if
+        ns = metaxploit.net_use(ip, portInt)
+        if not ns then
+            print(c.yellow + "<b>scan: no net session on " + ip + ":" + port + c.ennd)
+            return
+        end if
+        metalib = ns.dump_lib
+        // if specific lib requested, try to find it
+        if libName then
+            metalib = null
+            // first try loading locally if it's a full path or in /lib
+            localPath = libName
+            if libName.indexOf("/") == null then localPath = "/lib/" + libName
+            ml = metaxploit.load(localPath)
+            if ml then
+                metalib = ml
+                print(c.grey + "  using local: " + ml.lib_name + " " + ml.version + c.ennd)
+            end if
+            // fallback — scan all ports for the lib
+            if not metalib then
+                router = get_router(ip)
+                if router then
+                    ports = router.used_ports
+                    if ports then
+                        for p in ports
+                            pns = metaxploit.net_use(ip, p.port_number)
+                            if not pns then continue
+                            pl = pns.dump_lib
+                            if not pl then continue
+                            lname = libName.replace(".so","")
+                            if pl.lib_name == libName or pl.lib_name == lname then
+                                metalib = pl
+                                print(c.grey + "  using remote: " + pl.lib_name + " " + pl.version + " on port " + p.port_number + c.ennd)
+                                break
+                            end if
+                        end for
+                    end if
+                end if
+            end if
+            if not metalib then
+                print(c.yellow + "<b>scan: lib not found: " + libName + c.ennd)
+                return
+            end if
+        end if
+        if not metalib then
+            print(c.yellow + "<b>scan: metalib not obtained" + c.ennd)
+            return
+        end if
+    end if
+    memList = metaxploit.scan(metalib)
+    if not memList then
+        print(c.yellow + "<b>scan: no vulnerabilities found" + c.ennd)
+        return
+    end if
+    shells = 0
+    files  = 0
+    comps  = 0
+    for mem in memList
+        results = metaxploit.scan_address(metalib, mem).split("Unsafe check: ")
+        for res in results
+            if res == results[0] then continue
+            val = res[res.indexOf("<b>") + 3 : res.indexOf("</b>")]
+            print(char(10) + c.orange + "<b>" + mem + " " + val + c.ennd)
+            if inject then
+                obj = metalib.overflow(mem, val, inject)
+            else
+                obj = metalib.overflow(mem, val)
+            end if
+            if typeof(obj) == "shell" then
+                print("<b>shell   : " + c.yellow + obj + c.ennd)
+                shells = shells + 1
+                GETPERMS(obj)
+            end if
+            if typeof(obj) == "computer" then
+                print("<b>computer: " + c.yellow + obj + c.ennd)
+                comps = comps + 1
+                GETPERMS(obj)
+            end if
+            if typeof(obj) == "file" then
+                print("<b>file    : " + c.yellow + obj.name + c.ennd)
+                files = files + 1
+            end if
+        end for
+    end for
+    print(char(10) + c.gold + "lib: " + metalib.lib_name + " " + metalib.version + c.ennd)
+    print(c.orange + "shells: " + shells + "  files: " + files + "  computers: " + comps + c.ennd)
+end function
+
+// ── Grab ─────────────────────────────────────────────────────────
+Grab = function(ip, port, mem, val, inject)
+    if ip == "pt" then ip = publicTarget
+    if ip == "lt" then ip = localTarget
+    if not is_valid_ip(ip) then
+        print(c.yellow + "<b>grab: invalid ip" + c.ennd)
+        return
+    end if
+    portInt = port.to_int
+    if typeof(portInt) != "number" then
+        print(c.yellow + "<b>grab: invalid port" + c.ennd)
+        return
+    end if
+    ns = metaxploit.net_use(ip, portInt)
+    if not ns then
+        print(c.yellow + "<b>grab: no net session" + c.ennd)
+        return
+    end if
+    metalib = ns.dump_lib
+    if not metalib then
+        print(c.yellow + "<b>grab: metalib not obtained" + c.ennd)
+        return
+    end if
+    if inject then
+        globals.object = metalib.overflow(mem, val, inject)
+    else
+        globals.object = metalib.overflow(mem, val)
+    end if
+    globals.remotePath = "/"
+    if typeof(globals.object) == "shell" or typeof(globals.object) == "computer" then
+        print(c.cyan + "<b>object obtained" + c.ennd)
+        GETPERMS(globals.object)
+    else
+        print(c.yellow + "<b>grab: result type: " + typeof(globals.object) + c.ennd)
+    end if
+end function
+
+// ── SSH ──────────────────────────────────────────────────────────
+Ssh = function(creds, ip, port, comp)
+    parts = creds.split("@")
+    if parts.len < 2 then
+        print(c.yellow + "<b>ssh: usage: ssh [user@pass] [ip] [opt:port]" + c.ennd)
+        return
+    end if
+    user = parts[0]
+    pass = parts[1]
+    portInt = 22
+    if port then portInt = port.to_int
+    if typeof(portInt) != "number" then
+        print(c.yellow + "<b>ssh: invalid port" + c.ennd)
+        return
+    end if
+    print("Connecting to " + ip + ":" + portInt + " ...")
+    shell = comp.connect_service(ip, portInt, user, pass, "ssh")
+    if typeof(shell) == "string" then
+        print(c.yellow + shell + c.ennd)
+        return
+    end if
+    if shell then
+        globals.object = shell
+        globals.remotePath = "/"
+        print(c.cyan + "<b>shell obtained: " + ip + c.ennd)
+    else
+        print(c.yellow + "<b>ssh: connection failed" + c.ennd)
+    end if
+end function
+
+// ── Decipher ─────────────────────────────────────────────────────
+Decipher = function(flag, arg, obj)
+    getCracked = function(hash)
+        if gco.crypto then return gco.crypto.decipher(hash)
+        return crypto.decipher(hash)
+    end function
+    if flag == "-h" then
+        parts = arg.split(":")
+        if parts.len < 2 then
+            print(c.yellow + "<b>decipher -h: need [user:hash]" + c.ennd)
+            return
+        end if
+        pw = getCracked(parts[1])
+        if pw then
+            print("<b>password found: " + c.gold + pw + c.ennd)
+        else
+            print(c.yellow + "<b>decipher: not found" + c.ennd)
+        end if
+        return
+    end if
+    if flag == "-f" then
+        if typeof(obj) == "shell" then obj = obj.host_computer
+        f = GetFile(arg, obj, true)
+        if not f then
+            print(c.yellow + "<b>decipher: file not found: " + arg + c.ennd)
+            return
+        end if
+        if f.is_binary then
+            print(c.yellow + "<b>decipher: binary file" + c.ennd)
+            return
+        end if
+        if not f.has_permission("r") then
+            print(c.yellow + "<b>decipher: permission denied" + c.ennd)
+            return
+        end if
+        lines = f.get_content.split(char(10))
+        clean = []
+        for l in lines
+            if l.len > 0 then clean.push(l)
+        end for
+        if clean.len == 0 then
+            print(c.yellow + "<b>decipher: file empty" + c.ennd)
+            return
+        end if
+        if clean.len == 1 then
+            parts = clean[0].split(":")
+            if parts.len < 2 then return
+            pw = getCracked(parts[1])
+            if pw then
+                print("user: " + c.white + parts[0] + c.ennd + "  pass: " + c.gold + pw + c.ennd)
+            else
+                print(c.yellow + "<b>not found: " + parts[0] + c.ennd)
+            end if
+            return
+        end if
+        print("Multiple users:")
+        i = 1
+        for line in clean
+            print("  [" + i + "] " + line)
+            i = i + 1
+        end for
+        sel = ""
+        ok = false
+        while not ok
+            sel = user_input("Select user: ").to_int
+            if typeof(sel) == "number" and sel >= 1 and sel <= clean.len then ok = true
+        end while
+        parts = clean[sel - 1].split(":")
+        print("Deciphering " + parts[0] + " ...")
+        pw = getCracked(parts[1])
+        if pw then
+            print("user: " + c.white + parts[0] + c.ennd + "  pass: " + c.gold + pw + c.ennd)
+        else
+            print(c.yellow + "<b>not found" + c.ennd)
+        end if
+        return
+    end if
+    print(c.yellow + "<b>Usage: decipher [-h user:hash] [-f /path/file]" + c.ennd)
+end function
+
+// ── Corrupt Log ──────────────────────────────────────────────────
+CorruptLog = function(obj)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    if typeof(obj) != "computer" then
+        print(c.yellow + "<b>corlog: need computer or shell" + c.ennd)
+        return
+    end if
+    ans = ""
+    while ans != "y" and ans != "n"
+        ans = user_input(c.yellow + "Corrupt system.log? (y/n): " + c.ennd)
+    end while
+    if ans == "n" then return
+    test = obj.touch("/home/guest", "system.log")
+    if test == false then
+        print(c.yellow + "<b>corlog: cannot create temp file" + c.ennd)
+        return
+    end if
+    f = obj.File("/home/guest/system.log")
+    if not f then
+        print(c.yellow + "<b>corlog: temp file not found" + c.ennd)
+        return
+    end if
+    res = f.move("/var", "system.log")
+    if res == "permission denied" then
+        print(c.yellow + "<b>corlog: permission denied" + c.ennd)
+        return
+    end if
+    lf = obj.File("/var/system.log")
+    if not lf or lf.is_binary then
+        print(c.yellow + "<b>corlog: failed" + c.ennd)
+        return
+    end if
+    lf.set_owner("root")
+    lf.set_group("root")
+    lf.chmod("o-w")
+    lf.chmod("g-w")
+    print(c.cyan + "system.log corrupted" + c.ennd)
+end function
+
+// ── Enum ─────────────────────────────────────────────────────────
+Enum = function(myObj, obj)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    if typeof(obj) != "computer" then
+        print(c.yellow + "<b>enum: need remote computer or shell" + c.ennd)
+        return
+    end if
+    if typeof(myObj) == "shell" then myObj = myObj.host_computer
+    pcName = obj.get_name
+    public = obj.public_ip
+    lan    = obj.local_ip
+    procs  = obj.show_procs
+    memList = MemDump(obj.File("/"))
+    myObj.create_folder(myPath, pcName)
+    saveDir = myObj.File(myPath + "/" + pcName)
+    info = "PERMS OWNER GROUP BINARY IMPORT SIZE PATH" + char(10) + char(10)
+    pad = 0
+    for item in memList
+        imp = "no"
+        bin = "no"
+        if item.allow_import then imp = "yes"
+        if item.is_binary then
+            bin = "yes"
+        else
+            if item.has_permission("r") and saveDir then
+                myObj.touch(saveDir.path, pad + "." + item.name)
+                sf = myObj.File(saveDir.path + "/" + pad + "." + item.name)
+                if sf then sf.set_content(item.get_content)
+                pad = pad + 1
+            end if
+        end if
+        info = info + item.permissions + " " + item.owner + " " + item.group + " " + bin + " " + imp + " " + item.size + " " + item.path + char(10)
+    end for
+    data = pcName + char(10) + "public: " + public + "  lan: " + lan + char(10) + char(10)
+    print(data)
+    if saveDir then
+        myObj.touch(saveDir.path, "data.txt")
+        sf = myObj.File(saveDir.path + "/data.txt")
+        if sf then sf.set_content(data)
+    end if
+    print(char(10) + c.cyan + "enum complete: " + pcName + c.ennd)
+end function
+
+// ── Escalate ─────────────────────────────────────────────────────
+Escalate = function(comp)
+    folder = comp.File("/lib")
+    if not folder then
+        print(c.yellow + "<b>escalate: /lib not found" + c.ennd)
+        return
+    end if
+    libs = folder.get_files
+    if not libs then
+        print(c.yellow + "<b>escalate: no libs" + c.ennd)
+        return
+    end if
+    for lib in libs
+        ml = metaxploit.load("/lib/" + lib.name)
+        if not ml then continue
+        mems = metaxploit.scan(ml)
+        print(c.cyan + "<b>" + ml.lib_name + c.ennd)
+        if not mems then continue
+        for mem in mems
+            items = metaxploit.scan_address(ml, mem).split("Unsafe check: ")
+            if not items then continue
+            for item in items
+                if item == items[0] then continue
+                val = item[item.indexOf("<b>") + 3 : item.indexOf("</b>")]
+                result = ml.overflow(mem, val)
+                if typeof(result) == "shell" or typeof(result) == "computer" then
+                    GETPERMS(result)
+                    ans = ""
+                    while ans != "y" and ans != "n" and ans != "q"
+                        ans = user_input(c.orange + "<b>use this object? (y/n/q): " + c.ennd)
+                    end while
+                    if ans == "q" then return
+                    if ans == "y" then
+                        globals.lObject = result
+                        print(c.orange + "<b>privileges escalated" + c.ennd)
+                        return
+                    end if
+                end if
+            end for
+        end for
+    end for
+    print(c.yellow + "<b>escalate: nothing found" + c.ennd)
+end function
+
+// ── GetRoot ──────────────────────────────────────────────────────
+GetRoot = function(path, password, obj)
+    if typeof(obj) != "shell" then
+        print(c.yellow + "<b>getroot: need remote shell" + c.ennd)
+        return
+    end if
+    test = obj.host_computer.touch(path, "gr.src")
+    if test == false then
+        print(c.yellow + "<b>getroot: cannot create file at: " + path + c.ennd)
+        return
+    end if
+    f = obj.host_computer.File(path + "/gr.src")
+    if not f then
+        print(c.yellow + "<b>getroot: file not found" + c.ennd)
+        return
+    end if
+    f.set_content("password = params[0]; gco = get_custom_object; s = get_shell(""root"",password); if s then gco.rootShell = s")
+    obj.build(path + "/gr.src", path, false)
+    obj.launch(path + "/gr", password)
+    if gco.rootShell then
+        print(c.cyan + "root shell acquired" + c.ennd)
+        globals.object = gco.rootShell
+        gco.rootShell = null
+    else
+        print(c.yellow + "<b>getroot: failed" + c.ennd)
+    end if
+end function
+
+// ── SCP ──────────────────────────────────────────────────────────
+Scp = function(flag, orig, dest)
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>scp: need remote shell" + c.ennd)
+        return
+    end if
+    if flag == "-u" then myShell.scp(orig, dest, object)
+    if flag == "-d" then object.scp(orig, dest, myShell)
+end function
+
+// ── Set Target ───────────────────────────────────────────────────
+SetTarget = function(ip, flag)
+    if not is_valid_ip(ip) then
+        print(c.yellow + "<b>set: invalid ip" + c.ennd)
+        return
+    end if
+    if is_lan_ip(ip) then
+        if flag == "-b" then
+            globals.bounceTarget = ip
+            print(c.cyan + "bounce target: " + ip + c.ennd)
+        else
+            globals.localTarget = ip
+            print(c.cyan + "local target: " + ip + c.ennd)
+        end if
+        return
+    end if
+    globals.publicTarget = ip
+    print(c.cyan + "public target: " + ip + c.ennd)
+end function
+
+// ── Ls ───────────────────────────────────────────────────────────
+Ls = function(inp, path, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    folderPath = path
+    if inp.len > 1 and inp[inp.len - 1].indexOf("-") == null then
+        folderPath = inp[inp.len - 1]
+    end if
+    folder = GetFile(folderPath, obj, local)
+    if not folder then
+        print(c.yellow + "<b>ls: not found" + c.ennd)
+        return
+    end if
+    showAll  = inp.len > 1 and inp[1].indexOf("a") != null
+    showLong = inp.len > 1 and inp[1].indexOf("l") != null
+    items = folder.get_folders + folder.get_files
+    out = ""
+    for item in items
+        if showAll or item.name.indexOf(".") != 0 then
+            if out.len > 0 then out = out + char(10)
+            if showLong then
+                out = out + item.permissions + " " + item.owner + " " + item.group + " " + item.size + " " + item.name
+            else
+                out = out + item.name
+            end if
+        end if
+    end for
+    print(format_columns(out))
+end function
+
+// ── Mkdir ────────────────────────────────────────────────────────
+Mkdir = function(path, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    parts = path.split("/")
+    name = parts[parts.len - 1]
+    parts.remove(parts.len - 1)
+    parent = parts.join("/")
+    if parent == "" then
+        if local then
+            parent = myPath
+        else
+            parent = remotePath
+        end if
+    end if
+    pf = GetFile(parent, obj, local)
+    if not pf then
+        print(c.yellow + "<b>mkdir: parent not found: " + parent + c.ennd)
+        return
+    end if
+    obj.create_folder(pf.path, name)
+end function
+
+// ── Rm ───────────────────────────────────────────────────────────
+Rm = function(path, recursive, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    f = GetFile(path, obj, local)
+    if not f then
+        print(c.yellow + "<b>rm: not found: " + path + c.ennd)
+        return
+    end if
+    if not f.has_permission("w") then
+        print(c.yellow + "<b>rm: permission denied" + c.ennd)
+        return
+    end if
+    if f.is_folder and not recursive then
+        print(c.yellow + "<b>rm: is a directory, use rm -r" + c.ennd)
+        return
+    end if
+    name = f.name
+    out = f.delete
+    if out and out.len > 0 then
+        print(out)
+    else
+        print("<b>deleted: " + name)
+    end if
+end function
+
+// ── Mv ───────────────────────────────────────────────────────────
+Mv = function(src, dst, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    f = GetFile(src, obj, local)
+    if not f then
+        print(c.yellow + "<b>mv: not found: " + src + c.ennd)
+        return
+    end if
+    parts = dst.split("/")
+    newName = parts[parts.len - 1]
+    parts.remove(parts.len - 1)
+    parent = parts.join("/")
+    if parent == "" then parent = f.parent.path
+    df = obj.File(parent)
+    if not df then
+        print(c.yellow + "<b>mv: destination not found" + c.ennd)
+        return
+    end if
+    f.move(df.path, newName)
+end function
+
+// ── Cp ───────────────────────────────────────────────────────────
+Cp = function(src, dst, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    f = GetFile(src, obj, local)
+    if not f then
+        print(c.yellow + "<b>cp: not found: " + src + c.ennd)
+        return
+    end if
+    parts = dst.split("/")
+    newName = parts[parts.len - 1]
+    parts.remove(parts.len - 1)
+    parent = parts.join("/")
+    if parent == "" then parent = f.parent.path
+    out = f.copy(parent, newName)
+    if out and out != 1 then print(out)
+end function
+
+// ── Cat ──────────────────────────────────────────────────────────
+Cat = function(path, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    f = GetFile(path, obj, local)
+    if not f then
+        print(c.yellow + "<b>cat: not found: " + path + c.ennd)
+        return
+    end if
+    if f.is_binary then
+        print(c.yellow + "<b>cat: binary file" + c.ennd)
+        return
+    end if
+    if not f.has_permission("r") then
+        print(c.yellow + "<b>cat: permission denied" + c.ennd)
+        return
+    end if
+    print(f.get_content)
+end function
+
+// ── Chmod / Chown / Chgrp ────────────────────────────────────────
+Chmod = function(perms, path, rec, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    f = GetFile(path, obj, local)
+    if not f then
+        print(c.yellow + "<b>chmod: not found: " + path + c.ennd)
+        return
+    end if
+    out = f.chmod(perms, rec)
+    if out then print(out)
+end function
+
+Chown = function(owner, path, rec, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    f = GetFile(path, obj, local)
+    if not f then
+        print(c.yellow + "<b>chown: not found: " + path + c.ennd)
+        return
+    end if
+    out = f.set_owner(owner, rec)
+    if out then print(out)
+end function
+
+Chgrp = function(group, path, rec, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    f = GetFile(path, obj, local)
+    if not f then
+        print(c.yellow + "<b>chgrp: not found: " + path + c.ennd)
+        return
+    end if
+    out = f.set_group(group, rec)
+    if out then print(out)
+end function
+
+// ── Search ───────────────────────────────────────────────────────
+Search = function(term, obj)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    all = MemDump(obj.File("/"))
+    if not all then return
+    for item in all
+        if term == "" or item.name.indexOf(term) != null or item.path.indexOf(term) != null then
+            print(item.path)
+        end if
+    end for
+end function
+
+// ── Kill ─────────────────────────────────────────────────────────
+Kill = function(pid, obj)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    pidInt = pid.to_int
+    if typeof(pidInt) != "number" then
+        print(c.yellow + "<b>kill: PID must be a number" + c.ennd)
+        return
+    end if
+    out = obj.close_program(pidInt)
+    if out == true then
+        print("process " + pid + " closed")
+    else
+        print(c.yellow + "process " + pid + " not found" + c.ennd)
+    end if
+end function
+
+// ── Touch ────────────────────────────────────────────────────────
+Touch = function(path, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    parts = path.split("/")
+    name = parts[parts.len - 1]
+    parts.remove(parts.len - 1)
+    parent = parts.join("/")
+    if parent == "" then
+        if local then
+            parent = myPath
+        else
+            parent = remotePath
+        end if
+    end if
+    pf = obj.File(parent)
+    if not pf then
+        print(c.yellow + "<b>touch: parent not found" + c.ennd)
+        return
+    end if
+    out = obj.touch(pf.path, name)
+    if out and out != 1 then
+        print(out)
+    else
+        print("<b>created: " + path)
+    end if
+end function
+
+// ── Passwd ───────────────────────────────────────────────────────
+Passwd = function(user, obj)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    pw = user_input("New password for " + user + ": ", true)
+    out = obj.change_password(user, pw)
+    if out == true then
+        print("<b>passwd: changed")
+    else if out then
+        print(c.yellow + out + c.ennd)
+    end if
+end function
+
+// ── UserAdd / UserDel ────────────────────────────────────────────
+UserAdd = function(user, obj)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    pw = user_input("Password for " + user + ": ", true)
+    out = obj.create_user(user, pw)
+    if out == true then
+        print("<b>user created: " + user)
+    else if out then
+        print(c.yellow + out + c.ennd)
+    end if
+end function
+
+UserDel = function(user, recursive, obj)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    del = 0
+    if recursive then del = 1
+    out = obj.delete_user(user, del)
+    if out == true then
+        print("<b>user deleted: " + user)
+    else if out then
+        print(c.yellow + out + c.ennd)
+    end if
+end function
+
+// ── Ping ─────────────────────────────────────────────────────────
+Ping = function(ip, comp)
+    if ip == "pt" then ip = publicTarget
+    if ip == "lt" then ip = localTarget
+    if ip == "bt" then ip = bounceTarget
+    r = comp.ping(ip)
+    if r then
+        if typeof(r) == "string" then
+            print(r)
+        else
+            print("<b>ping: " + ip + " is up")
+        end if
+    else
+        print(c.yellow + "<b>ping: unreachable" + c.ennd)
+    end if
+end function
+
+// ── Whois ────────────────────────────────────────────────────────
+Whois = function(ip)
+    if ip == "pt" then ip = publicTarget
+    if not is_valid_ip(ip) or is_lan_ip(ip) then
+        print(c.yellow + "<b>whois: need a public ip" + c.ennd)
+        return
+    end if
+    print(whois(ip))
+    if publicTarget == "" then SetTarget(ip, null)
+end function
+
+// ── Ifconfig ─────────────────────────────────────────────────────
+Ifconfig = function(comp)
+    router = get_router
+    if comp.is_network_active then
+        lip = comp.local_ip
+        pip = router.public_ip
+        gw  = comp.network_gateway
+        if comp.active_net_card == "WIFI" then
+            mode = "WIFI  essid:" + router.essid_name
+        else
+            mode = "ETHERNET"
+        end if
+    else
+        lip  = "0.0.0.0"
+        pip  = "0.0.0.0"
+        gw   = "0.0.0.0"
+        mode = "DISCONNECTED"
+    end if
+    print(char(10) + mode + char(10) + "public : " + pip + char(10) + "local  : " + lip + char(10) + "gateway: " + gw + char(10))
+end function
+
+// ── Drop ─────────────────────────────────────────────────────────
+Drop = function(flag)
+    ans = ""
+    if flag == "-r" then
+        while ans != "y" and ans != "n"
+            ans = user_input(c.yellow + "<b>drop remote object? (y/n): " + c.ennd)
+        end while
+        if ans == "y" then
+            globals.object = null
+            gco.rshellServer = null
+            gco.rshellPort = null
+        end if
+    end if
+    if flag == "-l" then
+        while ans != "y" and ans != "n"
+            ans = user_input(c.yellow + "<b>drop local object? (y/n): " + c.ennd)
+        end while
+        if ans == "y" then
+            globals.lObject = null
+            globals.myShell = get_shell
+            globals.myComp  = myShell.host_computer
+        end if
+    end if
+end function
+
+// ── Rterminal ────────────────────────────────────────────────────
+Rterminal = function(obj)
+    if typeof(obj) != "shell" then
+        print(c.yellow + "<b>rterminal: not holding remote shell" + c.ennd)
+        return
+    end if
+    ans = user_input(c.yellow + "Open terminal on remote machine? (y/n): " + c.ennd)
+    if ans == "y" then obj.start_terminal
+end function
+
+// ── RouterData ───────────────────────────────────────────────────
+RouterData = function(ip, port)
+    if not port then port = 0
+    if typeof(port) == "string" then port = port.to_int
+    r  = get_router(ip)
+    ns = metaxploit.net_use(ip, port)
+    if r then
+        devs = r.devices_lan_ip
+        out = char(10) + "connected devices:"
+        for d in devs
+            out = out + char(10) + "  " + d
+        end for
+        print(out)
+        print("firewall: " + r.firewall_rules)
+    end if
+    if ns then
+        print("gateways    : " + ns.get_num_conn_gateway)
+        print("portforwards: " + ns.get_num_portforward)
+        print("users       : " + ns.get_num_users)
+        print("root active : " + ns.is_root_active_user)
+    end if
+end function
+
+// ── ShowHelp ─────────────────────────────────────────────────────
+ShowHelp = function(flag)
+    if flag == "-a" or flag == "-l" then
+        print(char(10) + c.lime + "<b>── LOCAL ────────────────────────────────────────────────────" + c.ennd + char(10))
+        print(c.yellow+"<b>ls</b>"+c.ennd+"         ls [opt:-l -a] [opt:path]")
+        print(c.yellow+"<b>cd</b>"+c.ennd+"         cd [path]  /  cd ..")
+        print(c.yellow+"<b>cat</b>"+c.ennd+"        cat [file]")
+        print(c.yellow+"<b>cp</b>"+c.ennd+"         cp [src] [dst]")
+        print(c.yellow+"<b>mv</b>"+c.ennd+"         mv [src] [dst]")
+        print(c.yellow+"<b>rm</b>"+c.ennd+"         rm [opt:-r] [path]")
+        print(c.yellow+"<b>mkdir</b>"+c.ennd+"      mkdir [path]")
+        print(c.yellow+"<b>touch</b>"+c.ennd+"      touch [path/file]")
+        print(c.yellow+"<b>chmod</b>"+c.ennd+"      chmod [opt:-R] [perms] [path]")
+        print(c.yellow+"<b>chown</b>"+c.ennd+"      chown [opt:-R] [owner] [path]")
+        print(c.yellow+"<b>chgrp</b>"+c.ennd+"      chgrp [opt:-R] [group] [path]")
+        print(c.yellow+"<b>search</b>"+c.ennd+"     search [opt:keyword]")
+        print(c.yellow+"<b>ps</b>"+c.ennd+"         ps")
+        print(c.yellow+"<b>kill</b>"+c.ennd+"       kill [PID]")
+        print(c.yellow+"<b>passwd</b>"+c.ennd+"     passwd [user]")
+        print(c.yellow+"<b>useradd</b>"+c.ennd+"    useradd [user]")
+        print(c.yellow+"<b>userdel</b>"+c.ennd+"    userdel [opt:-r] [user]")
+        print(c.yellow+"<b>pwd</b>"+c.ennd+"        pwd")
+        print(c.yellow+"<b>whoami</b>"+c.ennd+"     whoami")
+        print(c.yellow+"<b>clear</b>"+c.ennd+"      clear")
+        print(c.yellow+"<b>decipher</b>"+c.ennd+"   decipher [-h user:hash] [-f /path]")
+        print(c.yellow+"<b>cover</b>"+c.ennd+"      cover  (corlog + wipe + drop shell)")
+        print(c.yellow+"<b>corlog</b>"+c.ennd+"     corrupt system.log on current object")
+        print(c.yellow+"<b>escalate</b>"+c.ennd+"   escalate local privileges via lib scan")
+        print(c.yellow+"<b>push</b>"+c.ennd+"       push current object onto stack")
+        print(c.yellow+"<b>pop</b>"+c.ennd+"        pop object from stack → set as active")
+        print(c.yellow+"<b>stack</b>"+c.ennd+"      show all stacked objects")
+        print(c.yellow+"<b>swap</b>"+c.ennd+"       swap [opt:index]  (swap active with stack entry)")
+        print(c.yellow+"<b>drop</b>"+c.ennd+"       drop [-l] [-r]")
+        print(c.yellow+"<b>terminal</b>"+c.ennd+"   open new local terminal")
+        print(c.yellow+"<b>randip</b>"+c.ennd+"     generate a random IP")
+    end if
+    if flag == "-a" or flag == "-n" then
+        print(char(10) + c.lime + "<b>── NETWORK ──────────────────────────────────────────────────" + c.ennd + char(10))
+        print(c.yellow+"<b>nmap</b>"+c.ennd+"       nmap [ip/pt/lt]")
+        print(c.yellow+"<b>ping</b>"+c.ennd+"       ping [ip/pt/lt/bt]")
+        print(c.yellow+"<b>whois</b>"+c.ennd+"      whois [public ip]")
+        print(c.yellow+"<b>ifconfig</b>"+c.ennd+"   ifconfig")
+        print(c.yellow+"<b>set</b>"+c.ennd+"        set [ip] [opt:-b]")
+        print(c.yellow+"<b>unset</b>"+c.ennd+"      unset [-p] [-l] [-b] [-a]")
+        print(c.yellow+"<b>ssh</b>"+c.ennd+"        ssh [user@pass] [ip] [opt:port]")
+        print(c.yellow+"<b>scp</b>"+c.ennd+"        scp [-u|-d] [src] [dst]")
+        print(c.yellow+"<b>routerdata</b>"+c.ennd+"  routerdata [ip] [opt:port]")
+        print(c.yellow+"<b>proxy</b>"+c.ennd+"      proxy [hops]  (build anonymous chain)")
+        print(c.yellow+"<b>proxystatus</b>"+c.ennd+"  show current proxy chain")
+        print(c.yellow+"<b>proxyclear</b>"+c.ennd+"   clear chain + drop object")
+    end if
+    if flag == "-a" or flag == "-h" then
+        print(char(10) + c.lime + "<b>── HACKING ──────────────────────────────────────────────────" + c.ennd + char(10))
+        print(c.yellow+"<b>scan</b>"+c.ennd+"       scan [ip] [port] [opt:lan-ip]")
+        print(c.yellow+"<b>scan</b>"+c.ennd+"       scan [ip] [port] [lan-ip] -lib [lib.so] [opt:mem] [opt:val]")
+        print(c.yellow+"<b>grab</b>"+c.ennd+"       grab [ip] [port] [mem] [val] [opt:inject]")
+        print(c.yellow+"<b>getroot</b>"+c.ennd+"    getroot [path] [password]")
+        print(c.yellow+"<b>autoroot</b>"+c.ennd+"   autoroot  |  autoroot [ip] [user] [pass]")
+        print(c.yellow+"<b>enum</b>"+c.ennd+"       enum [-l] [-r]  (full filesystem dump)")
+        print(c.yellow+"<b>harvest</b>"+c.ennd+"    harvest  (crack Mail.txt + Bank.txt)")
+        print(c.yellow+"<b>wifi</b>"+c.ennd+"       wifi  (scan + crack nearby WiFi networks)")
+        print(c.yellow+"<b>wstack</b>"+c.ennd+"     wstack  (bounce whole LAN, push all computers to stack)")
+        print(c.yellow+"<b>pwnlan</b>"+c.ennd+"     pwnlan  (exploit all LAN devices)")
+        print(c.yellow+"<b>netmap</b>"+c.ennd+"     netmap  (LAN recon, no attacking)")
+        print(c.yellow+"<b>hacklan</b>"+c.ennd+"    hacklan [lan-ip]  (bounce to LAN device)")
+        print(c.yellow+"<b>lscan</b>"+c.ennd+"      lscan  (scan target libs from target hardware)")
+        print(c.yellow+"<b>autoharvest</b>"+c.ennd+"  autoharvest [hops] [max_targets]")
+        print(c.yellow+"<b>buildrt</b>"+c.ennd+"    build rainbow table in memory")
+        print(c.yellow+"<b>rtgen</b>"+c.ennd+"      rtgen  (build + write rainbow table to ~/rt/)")
+        print(c.yellow+"<b>crack</b>"+c.ennd+"      crack [hash]")
+        print(c.yellow+"<b>propagate</b>"+c.ennd+"  propagate [opt:--rshell]  (copy phantom to target)")
+        print(c.yellow+"<b>rshell</b>"+c.ennd+"     rshell  |  rshell start/stop/init/infect/info")
+    end if
+    if flag == "-a" or flag == "-r" then
+        print(char(10) + c.lime + "<b>── REMOTE ───────────────────────────────────────────────────" + c.ennd + char(10))
+        print(c.yellow+"<b>rls</b>"+c.ennd+"        rls [opt:path]")
+        print(c.yellow+"<b>rcd</b>"+c.ennd+"        rcd [path]")
+        print(c.yellow+"<b>rcat</b>"+c.ennd+"       rcat [file]")
+        print(c.yellow+"<b>rcp rmv rrm</b>"+c.ennd+"  rcp/rmv/rrm [opt:-r] [src] [dst]")
+        print(c.yellow+"<b>rmkdir rtouch</b>"+c.ennd+"  rmkdir/rtouch [path]")
+        print(c.yellow+"<b>rchmod rchown rchgrp</b>"+c.ennd+"  [opt:-R] [val] [path]")
+        print(c.yellow+"<b>rsearch</b>"+c.ennd+"    rsearch [opt:keyword]")
+        print(c.yellow+"<b>rps</b>"+c.ennd+"        show remote processes")
+        print(c.yellow+"<b>rkill</b>"+c.ennd+"      rkill [PID]")
+        print(c.yellow+"<b>rpasswd</b>"+c.ennd+"    rpasswd [user]")
+        print(c.yellow+"<b>ruseradd ruserdel</b>"+c.ennd+"  ruseradd/ruserdel [opt:-r] [user]")
+        print(c.yellow+"<b>rcorlog</b>"+c.ennd+"    corrupt remote system.log")
+        print(c.yellow+"<b>rterminal</b>"+c.ennd+"  open terminal on remote machine")
+        print(c.yellow+"<b>rdecipher</b>"+c.ennd+"  rdecipher [-h user:hash] [-f /path]")
+        print(c.grey+"  all remote commands work on held remote object" + c.ennd)
+    end if
+    if flag == "" or flag == null then
+        print(char(10) + c.cyan + "<b>PHANTOM v1.2" + c.ennd + c.grey + "  by operator" + c.ennd)
+        print(c.grey + "help [-a] all   [-l] local   [-n] network   [-h] hacking   [-r] remote" + c.ennd)
+        print(char(10) + c.gold + "quick ref:" + c.ennd)
+        print(c.grey + "  proxy [hops]        → build anonymous chain first" + c.ennd)
+        print(c.grey + "  scan pt 0           → find router exploits" + c.ennd)
+        print(c.grey + "  grab pt 0 [m] [v]   → get router shell" + c.ennd)
+        print(c.grey + "  autoroot            → escalate to root" + c.ennd)
+        print(c.grey + "  weaklib             → harvest whole LAN" + c.ennd)
+        print(c.grey + "  scan pt 0 [lanip] -lib libhttp.so  → bounce to LAN device" + c.ennd)
+        print(c.grey + "  propagate --rshell  → set up rshell server on target" + c.ennd)
+        print(c.grey + "  push/pop/stack/swap → juggle multiple objects" + c.ennd)
+        print(c.grey + "  cover               → clean up traces" + c.ennd)
+    end if
+end function
+
+// ── Markov Password Generator ─────────────────────────────────────
+MarkovGenerate = function()
+    order = 3
+    minLength = 3
+
+    // multiple themed sample lists for more variety
+    tables = {}
+
+    tables["common"] = "password,123456,qwerty,dragon,baseball,football,letmein,monkey,abc123,mustang,shadow,master,sunshine,princess,hunter,trustno1,ranger,batman,hockey,superman,iloveyou,access,starwars,cheese,michael,jennifer,thomas,jordan,tigger,robert,soccer,george,charlie,andrew,michelle,pepper,joshua,welcome,secret,computer,thunder,nicole,hammer,summer,corvette,taylor,austin,merlin,matthew,golfer,martin,chelsea,patrick,diamond,sparky,cowboy,camaro,matrix,falcon,bailey,guitar,jackson,purple,phoenix,morgan,tigers,porsche,mickey,maverick,cookie,peanut,justin,money,samantha,steelers,joseph,snoopy,cowboys,eagles,chicken,ferrari,knight,melissa,coffee,johnny,bulldog,james,player,wizard,scooby,charles,internet,mike,tennis,banana,monster,spider,lakers,miller,rabbit,mercedes,brandon,steven,fender,yamaha,diablo,chris,boston,tiger,marine,chicago,rangers,gandalf,winter,barney,edward,raiders,london,midnight,blue,fishing,rachel,redsox,marlboro,panther,arsenal,oliver,mother,victoria,jasper,angel,david,crystal,golden,viking,jack,shannon,murphy,angels,prince,cameron,madison,wilson,carlos,willie,captain,jasmine,butter,angela,golf,lauren,rocket,tiffany,dennis,flower,forever,green,jackie,muffin,turtle,sophie,danielle,toyota,jason,sierra,winston,giants,packers,newyork,jeremy,casper,bubba,sandra,lovers,mountain,united,cooper,driver,tucker,pookie,lucky,maxwell,gators,jaguar,monica,fred,happy,hotdog,gemini,lover,canada,nathan,victor,florida,nicholas,rosebud,doctor,trouble,success,stupid,tomcat,warrior,peaches,apples,magic,buddy,dolphins,rainbow,gunner,freddy,alexis,braves,xavier,dolphin,testing,member,calvin,voodoo,samson,alex,apollo,fire,walter,peter,bonnie,beer,apple,scorpio,jonathan,skippy,sydney,scott,power,gordon,travis,beaver,star,flyers,kramer,chopper,honey,lisa,baxter,adam,snake,britney,avalon,sandy,sugar,sublime,stewart,raven,scarface,silver,trucks,wolfpack,lawrence,raymond,american,alyssa,bambam,woody,snowman,shooter,stars,kristen,sports,jerry,garcia,simpsons,lights,ryan,alison,packard,hendrix,perfect,service,spring,spike,katie,oscar,brother,cannon,georgia,popeye,tattoo,texas,party,bullet,taurus,sailor,wolves,panthers,japan,strike,flowers,berlin,marina,fisher,russia,connie,wolfman,soldier,picture,pierre,goddess,manager,nikita,sweety,titans,smiley,goldberg,express,stone,andy,babylon,powers,dudley,serenity,samurai,skeeter,lindsay,birthday,alfred,maria,maxima,sampson,buckeye,highland,kristin,reaper,bassman,nugget,lucifer,airforce,watson,warlock,philip,dodge,chrissy,burger,bird,missy,pink,gang,maddie,holmes,piglet,joanne,hamilton,dodger,christy,chubby,hamlet,bigfoot,sunday,manson,goldfish,garden,blondie,spartan,julie,harold,charger,brandi,stormy,sherry,pleasure,juventus,rodney,galaxy,holland,escort,planet,jerome,wesley,blues,song,peace,cavalier,gambit,karen,sidney,ripper,jamie,sister,marie,martha,nadine,minnie,whiskey,plastic,chang,savannah,loser,racecar,hansolo,chiefs,frog,salmon,yvonne,shamrock,atlantis,warren,julian,mariah,harris,predator,sylvia,massive,cats,mister,stud,marathon,rubber,desire,montreal,faster,kathleen,irish,bertha,alpine,sammie,diamonds,tristan,stallion,roberto,ready,april,palmer,audrey,shirley,bluesky,sundance,renegade,bernard"
+
+    tables["tech"] = "admin,root,toor,login,system,server,network,internet,cisco,oracle,mysql,linux,ubuntu,debian,alpine,postgres,passwd,shadow,kernel,daemon,apache,nginx,python,django,flask,react,docker,ansible,puppet,nagios,splunk,github,gitlab,jenkins,redis,mongo,elastic,kibana,hadoop,spark,kafka,router,switch,firewall,gateway,proxy,backup,archive,cluster,master,slave,worker,node,client,socket,packet,buffer,stack,queue,thread,process,memory,storage,volume,bucket,bucket,image,container,virtual,vmware,hyper,xen,kvm,azure,amazon,google,cloud,devops,agile,scrum,sprint,deploy,release,pipeline,staging,production,testing,debug,trace,monitor,alert,metric,dashboard,report,audit,token,cipher,crypto,secure,passwd,secret,private,public,shared,access,permit,deny,block,allow,policy,rule,filter,nat,vpn,ssl,tls,https,tunnel,bridge,vlan,subnet,gateway,broadcast,multicast,unicast,routing,ospf,bgp,eigrp"
+
+    tables["names"] = "james,john,robert,michael,william,david,richard,joseph,thomas,charles,christopher,daniel,matthew,anthony,mark,donald,steven,paul,andrew,kenneth,joshua,kevin,brian,george,timothy,ronald,edward,jason,jeffrey,ryan,jacob,gary,nicholas,eric,jonathan,stephen,larry,justin,scott,brandon,benjamin,samuel,raymond,gregory,frank,alexander,patrick,raymond,jack,dennis,jerry,tyler,aaron,jose,henry,adam,douglas,nathan,peter,zachary,kyle,noah,alan,ethan,wayne,joe,juan,roy,ralph,carlos,arthur,albert,stanley,leonard,glen,vincent,travis,jeff,lloyd,phillip,danny,victor,jeremy,bruce,gabriel,russell,fred,gilbert,bobby,clifton,corey,jessie,derek,ronnie,lonnie,barry,reginald,marcus,clifford,mario,marvin,leon,willie,otis,clifton,samuel,phillip"
+
+    tables["l33t"] = "p4ssw0rd,4dm1n,r00t,s3cur3,h4cker,t3st,l0g1n,w3lc0me,m4st3r,s3cr3t,acc3ss,n3tw0rk,s3rv3r,f1r3wall,3xpl01t,h4x0r,0wn3d,pwn3d,r00t3d,sh3ll,b4ckd00r,tr0j4n,v1rus,w0rm,b0tnet,ph1sh,sp00f,sn1ff,br1ng,cr4ck,h4sh,s4lt,cyph3r,encr1pt,d3crypt,byp4ss,3sc4pe,1nj3ct,scr1pt,p4yl04d,3xpl01t,vuln,p4tch,z3r0d4y,m4lw4re,r4nsomw4re,k3ylog,sp1der,cr4wl,sc4n,pr0xy,s0cks,v1rtual,s4ndbox,d3bug,tr4ce,l0g,4ud1t,m0n1tor,4l3rt,r3port,d4shboard,m3tr1c"
+
+    tables["seasons"] = "january,february,march,april,may,june,july,august,september,october,november,december,spring,summer,autumn,winter,monday,tuesday,wednesday,thursday,friday,saturday,sunday,morning,evening,midnight,sunrise,sunset,dawn,dusk,spring2024,summer2024,winter2024,fall2024,spring2023,summer2023,winter2023,fall2023,january2024,february2024,march2024,april2024,may2024,june2024,july2024,august2024,september2024,october2024,november2024,december2024"
+
+    // build combined sample list from all tables
+    allSamples = []
+    for tableKey in tables.indexes
+        for pw in tables[tableKey].split(",")
+            if pw.len > order then allSamples.push(pw)
+        end for
+    end for
+
+    // build markov chains from all samples
+    chains = {}
+    for sample in allSamples
+        for i in range(0, sample.len - order - 1)
+            key = sample[i : i + order]
+            if not chains.hasIndex(key) then chains[key] = []
+            nextChar = sample[i + order]
+            if chains[key].indexOf(nextChar) == null then chains[key].push(nextChar)
+        end for
+    end for
+
+    // collect start configs
+    configMap = {}
+    for sample in allSamples
+        for startPos in range(0, sample.len - order)
+            key = sample[startPos : startPos + order]
+            configKey = key + "|" + sample.len
+            if not configMap.hasIndex(configKey) then
+                configMap[configKey] = [key, sample.len]
+            end if
+        end for
+    end for
+
+    passwordSet = {}
+
+    allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    cleanPw = function(pw)
+        for i in range(0, pw.len - 1)
+            if allowed.indexOf(pw[i]) == null then return ""
+        end for
+        return pw
+    end function
+
+    // seed with all originals
+    for tableKey in tables.indexes
+        for pw in tables[tableKey].split(",")
+            pl = cleanPw(pw.lower)
+            if pl != "" then
+                passwordSet[pl] = 1
+                if pl.len > 0 then passwordSet[pl[:1].upper + pl[1:]] = 1
+            end if
+        end for
+    end for
+
+    // iterative markov branching
+    for configKey in configMap.indexes
+        config = configMap[configKey]
+        startKey = config[0]
+        targetLen = config[1]
+        if targetLen < minLength then continue
+        stack = [[startKey, targetLen]]
+        while stack.len > 0
+            item = stack.pop
+            current = item[0]
+            target = item[1]
+            if current.len >= target then
+                fp = cleanPw(current.lower)
+                while fp.len > 0 and (fp[0] == "-")
+                    fp = fp[1:]
+                end while
+                while fp.len > 0 and (fp[-1] == "-")
+                    fp = fp[:-1]
+                end while
+                if fp.len >= minLength then
+                    passwordSet[fp] = 1
+                    if fp.len > 0 then passwordSet[fp[:1].upper + fp[1:]] = 1
+                end if
+                continue
+            end if
+            token = current[current.len - order:]
+            if not chains.hasIndex(token) then
+                fp = cleanPw(current.lower)
+                if fp.len >= minLength then
+                    passwordSet[fp] = 1
+                    if fp.len > 0 then passwordSet[fp[:1].upper + fp[1:]] = 1
+                end if
+                continue
+            end if
+            if current.len >= minLength then
+                fp = cleanPw(current.lower)
+                if fp != "" then
+                    passwordSet[fp] = 1
+                    if fp.len > 0 then passwordSet[fp[:1].upper + fp[1:]] = 1
+                end if
+            end if
+            for nextChar in chains[token]
+                stack.push([current + nextChar, target])
+            end for
+        end while
+    end for
+
+    return passwordSet.indexes
+end function
+
+// ── Rainbow Table ────────────────────────────────────────────────
+buildRainbowTable = function()
+    gco.rt = {}
+    print(c.green + "Generating passwords via Markov chain..." + c.ennd)
+    passwords = MarkovGenerate()
+    print(c.orange + "Hashing " + passwords.len + " passwords..." + c.ennd)
+    for pw in passwords
+        gco.rt[md5(pw)] = pw
+    end for
+    // import any .txt or .lst wordlist files from phantom folder
+    localComp = myComp
+    if not localComp then localComp = get_shell.host_computer
+    dir = localComp.File(currentPath)
+    loaded = 0
+    if dir and dir.is_folder then
+        files = dir.get_files
+        for f in files
+            nl = f.name.lower
+            if nl.len >= 4 and (nl[-4:] == ".txt" or nl[-4:] == ".lst") then
+                content = f.get_content
+                if content then
+                    lines = content.split(char(10))
+                    for line in lines
+                        pw = line.split(" ")[0]
+                        if pw != "" then gco.rt[md5(pw)] = pw
+                    end for
+                    loaded = loaded + 1
+                    print(c.grey + "  imported: " + f.name + c.ennd)
+                end if
+            end if
+        end for
+    end if
+    print(c.green + "Rainbow table ready: " + gco.rt.len + " entries  (" + loaded + " wordlist(s) imported)" + c.ennd)
+end function
+
+// ── RTGen — write rainbow table to disk ──────────────────────────
+RTGen = function()
+    // build full table including wordlists first
+    buildRainbowTable()
+    print(c.orange + "Writing " + gco.rt.len + " entries to disk..." + c.ennd)
+    rtPath = currentPath + "/rt"
+    rtDir = myComp.File(rtPath)
+    if not rtDir then
+        myComp.create_folder(currentPath, "rt")
+        rtDir = myComp.File(rtPath)
+    end if
+    // clear old files first
+    oldFiles = rtDir.get_files
+    if oldFiles then
+        for of in oldFiles
+            of.delete
+        end for
+    end if
+    keys = gco.rt.indexes
+    total = keys.len
+    count = 0
+    output = ""
+    i = 0
+    while i < total
+        hash = keys[i]
+        output = output + gco.rt[hash] + ":" + hash + char(10)
+        if output.len > 159000 or i == total - 1 then
+            num = "00" + count
+            filename = "rt." + num[-3:] + ".rt"
+            myComp.touch(rtPath, filename)
+            f = myComp.File(rtPath + "/" + filename)
+            if f then
+                f.set_content(output)
+                count = count + 1
+            end if
+            output = ""
+        end if
+        i = i + 1
+    end while
+    print(c.green + "rtgen: wrote " + count + " file(s) to " + rtPath + c.ennd)
+    print(c.green + "rtgen: " + gco.rt.len + " total entries" + c.ennd)
+end function
+
+CrackHash = function(hash)
+    if not gco.hasIndex("rt") or gco.rt == null then buildRainbowTable
+    if gco.rt.hasIndex(hash) then return gco.rt[hash]
+    if gco.crypto then return gco.crypto.decipher(hash)
+    return null
+end function
+
+// ── AutoRoot ─────────────────────────────────────────────────────
+AutoRoot = function(ip, user, pass)
+    if typeof(object) != "shell" then
+        if not ip then
+            print(c.yellow + "<b>autoroot: not holding remote shell" + c.ennd)
+            print(c.grey + "  usage: autoroot [ip] [user] [pass]" + c.ennd)
+            return
+        end if
+        print(c.orange + "Connecting to " + ip + " ..." + c.ennd)
+        s = myShell.connect_service(ip, 22, user, pass, "ssh")
+        if typeof(s) != "shell" then
+            print(c.yellow + "<b>autoroot: could not connect to " + ip + c.ennd)
+            return
+        end if
+        globals.object = s
+        globals.remotePath = "/"
+        print(c.cyan + "shell obtained: " + ip + c.ennd)
+    end if
+    comp = object.host_computer
+
+    // find writable path on target
+    writePath = null
+    for path in ["/home/guest", "/tmp", "/root"]
+        testDir = comp.File(path)
+        if testDir and testDir.has_permission("w") then
+            writePath = path
+            break
+        end if
+    end for
+    if not writePath then
+        print(c.yellow + "<b>autoroot: no writable path on target" + c.ennd)
+        return
+    end if
+
+    // upload ar binary
+    arBin = myComp.File(currentPath + "/ar")
+    if not arBin then
+        print(c.yellow + "<b>autoroot: ar binary not found in " + currentPath + c.ennd)
+        print(c.grey + "  build ar.src locally: build ar.src " + currentPath + c.ennd)
+        return
+    end if
+    print(c.orange + "Uploading ar to " + writePath + " ..." + c.ennd)
+    myShell.scp(currentPath + "/ar", writePath, object)
+    binFile = comp.File(writePath + "/ar")
+    if not binFile then
+        print(c.yellow + "<b>autoroot: ar upload failed" + c.ennd)
+        return
+    end if
+
+    // build clean password list from gco.rt
+    if not gco.hasIndex("rt") or gco.rt == null then buildRainbowTable
+    allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    passList = []
+    for hash in gco.rt.indexes
+        pw = gco.rt[hash]
+        ok = true
+        for i in range(0, pw.len - 1)
+            if allowed.indexOf(pw[i]) == null then
+                ok = false
+                break
+            end if
+        end for
+        if ok then passList.push(pw)
+    end for
+
+    print(c.orange + "Running " + passList.len + " passwords against target..." + c.ennd)
+    batchSize = 20
+    i = 0
+    gco.rootShell = null
+    while i < passList.len and not gco.rootShell
+        batch = passList[i : i + batchSize]
+        object.launch(writePath + "/ar", batch.join(" "))
+        i = i + batchSize
+    end while
+
+    binFile.delete
+
+    if gco.rootShell then
+        globals.object = gco.rootShell
+        globals.remotePath = "/"
+        gco.rootShell = null
+        print(c.green + "<b>autoroot: root shell obtained" + c.ennd)
+        GETPERMS(globals.object)
+    else
+        print(c.yellow + "<b>autoroot: failed" + c.ennd)
+    end if
+end function
+
+// ── Propagate ────────────────────────────────────────────────────
+Propagate = function(rshellMode)
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>propagate: not holding remote shell" + c.ennd)
+        return
+    end if
+    comp = object
+    rcomp = object.host_computer
+    me = get_shell
+
+    dst = null
+    for path in ["/home/guest", "/tmp", "/root"]
+        f = rcomp.File(path)
+        if f and f.has_permission("w") then
+            dst = path
+            break
+        end if
+    end for
+    if not dst then
+        print(c.yellow + "<b>propagate: no writable destination on target" + c.ennd)
+        return
+    end if
+
+    if rshellMode then
+        // use lean rsh folder
+        srcFolder = "/root/ai/rsh"
+        rshDir = myComp.File(srcFolder)
+        if not rshDir then srcFolder = currentPath
+    else
+        srcFolder = currentPath
+    end if
+
+    print(c.orange + "Copying " + srcFolder + " to " + dst + " on target..." + c.ennd)
+    result = me.scp(srcFolder, dst, comp)
+    if result and result != 1 then
+        print(c.yellow + "<b>propagate: scp error: " + result + c.ennd)
+        return
+    end if
+
+    parts = srcFolder.split("/")
+    folderName = parts[parts.len - 1]
+    remoteBin = dst + "/" + folderName + "/phantom"
+
+    binFile = rcomp.File(remoteBin)
+    if not binFile then
+        print(c.yellow + "<b>propagate: phantom not found at " + remoteBin + c.ennd)
+        return
+    end if
+
+    if rshellMode then
+        print(c.cyan + "Launching phantom --rshell on target..." + c.ennd)
+        comp.launch(remoteBin, "--rshell 1222")
+        gco.rshellServer = rcomp.public_ip
+        gco.rshellPort   = 1222
+        myPubIp = get_router.public_ip
+        if gco.rshellServer == myPubIp then
+            print(c.yellow + "<b>propagate: that's your own machine!" + c.ennd)
+            gco.rshellServer = null
+            return
+        end if
+        print(c.green + "<b>rshell server started on " + rcomp.public_ip + ":1222" + c.ennd)
+        print(c.grey + "  run rshell infect on targets to plant callback" + c.ennd)
+    else
+        print(c.cyan + "Launching phantom on target..." + c.ennd)
+        comp.launch(remoteBin)
+        print(c.green + "<b>propagate: phantom deployed to " + rcomp.public_ip + c.ennd)
+    end if
+end function
+
+// ── PwnLan ───────────────────────────────────────────────────────
+PwnLan = function()
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>pwnlan: not holding remote shell" + c.ennd)
+        return
+    end if
+    rcomp = object.host_computer
+
+    // get the target's router
+    router = get_router(rcomp.public_ip)
+    if not router then
+        print(c.yellow + "<b>pwnlan: could not reach target router" + c.ennd)
+        return
+    end if
+
+    devices = router.devices_lan_ip
+    if not devices or devices.len == 0 then
+        print(c.yellow + "<b>pwnlan: no LAN devices found" + c.ennd)
+        return
+    end if
+
+    print(c.cyan + "LAN devices found: " + devices.len + c.ennd)
+    div
+
+    results = []
+    for lanIp in devices
+        if lanIp == rcomp.local_ip then
+            print(c.grey + "  " + lanIp + "  (current target — skipping)" + c.ennd)
+            continue
+        end if
+        print(c.orange + "  scanning " + lanIp + " ..." + c.ennd)
+
+        // get open ports on this device
+        ports = router.device_ports(lanIp)
+        if not ports or ports.len == 0 then
+            print(c.grey + "    no open ports" + c.ennd)
+            continue
+        end if
+
+        grabbed = false
+        for p in ports
+            if grabbed then break
+            portNum = p.port_number
+            print(c.grey + "    trying port " + portNum + " ..." + c.ennd)
+
+            ns = metaxploit.net_use(lanIp, portNum)
+            if not ns then continue
+
+            ml = ns.dump_lib
+            if not ml then continue
+            if ml.is_patched then continue
+
+            mems = metaxploit.scan(ml)
+            if not mems then continue
+
+            for mem in mems
+                if grabbed then break
+                addrs = metaxploit.scan_address(ml, mem).split("Unsafe check: ")
+                for addr in addrs
+                    if grabbed then break
+                    if addr == addrs[0] then continue
+                    val = addr[addr.indexOf("<b>") + 3 : addr.indexOf("</b>")]
+                    obj = ml.overflow(mem, val)
+                    if typeof(obj) == "shell" then
+                        print(c.green + "    [+] shell: " + lanIp + "  " + mem + " " + val + c.ennd)
+                        GETPERMS(obj)
+                        results.push(lanIp + " " + portNum + " " + mem + " " + val)
+                        grabbed = true
+                    else if typeof(obj) == "computer" then
+                        print(c.green + "    [+] computer: " + lanIp + "  " + mem + " " + val + c.ennd)
+                        GETPERMS(obj)
+                        results.push(lanIp + " " + portNum + " " + mem + " " + val)
+                        grabbed = true
+                    end if
+                end for
+            end for
+        end for
+
+        if not grabbed then
+            print(c.grey + "    no exploits found on " + lanIp + c.ennd)
+        end if
+    end for
+
+    div
+    print(c.cyan + "pwnlan complete — " + results.len + "/" + devices.len + " devices exploited" + c.ennd)
+    if results.len > 0 then
+        print(c.gold + "results:" + c.ennd)
+        for r in results
+            print(c.green + "  " + r + c.ennd)
+        end for
+    end if
+end function
+
+// ── LocalScan ────────────────────────────────────────────────────
+LocalScan = function()
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>lscan: not holding remote shell" + c.ennd)
+        return
+    end if
+    comp = object.host_computer
+
+    // find writable path on target
+    writePath = null
+    for path in ["/home/guest", "/tmp", "/root"]
+        f = comp.File(path)
+        if f and f.has_permission("w") then
+            writePath = path
+            break
+        end if
+    end for
+    if not writePath then
+        print(c.yellow + "<b>lscan: no writable path on target" + c.ennd)
+        return
+    end if
+
+    // check ls binary exists locally
+    lsBin = myComp.File(currentPath + "/ls")
+    if not lsBin then
+        print(c.yellow + "<b>lscan: ls binary not found in " + currentPath + c.ennd)
+        print(c.grey + "  build ls.src locally first: build ls.src " + currentPath + c.ennd)
+        return
+    end if
+
+    // upload and run
+    print(c.orange + "Uploading scanner to " + writePath + " ..." + c.ennd)
+    myShell.scp(currentPath + "/ls", writePath, object)
+    binFile = comp.File(writePath + "/ls")
+    if not binFile then
+        print(c.yellow + "<b>lscan: upload failed" + c.ennd)
+        return
+    end if
+
+    print(c.orange + "Running on target hardware..." + c.ennd)
+    gco.lscanResults = null
+    object.launch(writePath + "/ls")
+    binFile.delete
+
+    if not gco.lscanResults then
+        print(c.yellow + "<b>lscan: no results returned" + c.ennd)
+        return
+    end if
+
+    // parse and display results
+    lines = gco.lscanResults.split(char(10))
+    shells = 0
+    files  = 0
+    comps  = 0
+    for line in lines
+        if line == "" then continue
+        parts = line.split(" ")
+        if parts.len < 4 then continue
+        libName = parts[0]
+        libVer  = parts[1]
+        mem     = parts[2]
+        val     = parts[3]
+        print(c.gold + libName + " " + libVer + c.ennd + "  " + c.orange + mem + "  " + val + c.ennd)
+        // attempt overflow to show what each exploit yields
+        ml = metaxploit.load("/lib/" + libName + ".so")
+        if not ml then continue
+        obj = ml.overflow(mem, val)
+        if typeof(obj) == "shell" then
+            print("  <b>shell   : " + c.yellow + obj + c.ennd)
+            shells = shells + 1
+            GETPERMS(obj)
+        end if
+        if typeof(obj) == "computer" then
+            print("  <b>computer: " + c.yellow + obj + c.ennd)
+            comps = comps + 1
+            GETPERMS(obj)
+        end if
+        if typeof(obj) == "file" then
+            print("  <b>file    : " + c.yellow + obj.name + c.ennd)
+            files = files + 1
+        end if
+    end for
+    print(char(10) + c.cyan + "lscan complete — shells:" + shells + "  files:" + files + "  computers:" + comps + c.ennd)
+end function
+
+// ── ScanRemoteLib ─────────────────────────────────────────────────
+// loads a lib FROM the remote router and scans with bounce to LAN IP
+// safe — never loads insecure libs on your own machine
+ScanRemoteLib = function(ip, port, bounceIp, libName, mem, val)
+    if not mem then mem = "0x1F000FB5"
+    if not val then val = "length"
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>scan -lib: not holding remote shell" + c.ennd)
+        return
+    end if
+    rcomp = object.host_computer
+
+    // upload our metaxploit to router
+    print(c.orange + "Jumping metaxploit to router..." + c.ennd)
+    me = get_shell
+    me.scp(currentPath + "/metaxploit.so", "/home/guest", object)
+
+    // write scanner src to router
+    rcomp.touch("/home/guest", "slx.src")
+    srcFile = rcomp.File("/home/guest/slx.src")
+    if not srcFile then
+        print(c.yellow + "<b>scan -lib: could not write script" + c.ennd)
+        return
+    end if
+
+    q = char(34)
+    n = char(10)
+    src = "gco = get_custom_object" + n
+    src = src + "selfPath = program_path.split(char(47))[:-1].join(char(47))" + n
+    src = src + "metaxploit = include_lib(selfPath + char(47) + " + q + "metaxploit.so" + q + ")" + n
+    src = src + "if not metaxploit then exit(" + q + "no metaxploit" + q + ")" + n
+    src = src + "ml = metaxploit.load(" + q + "/lib/" + q + " + gco.slxLib)" + n
+    src = src + "if not ml then exit(" + q + "lib not found" + q + ")" + n
+    src = src + "obj = ml.overflow(gco.slxMem, gco.slxVal, gco.slxBounce)" + n
+    src = src + "gco.slxType = typeof(obj)" + n
+    src = src + "if typeof(obj) == " + q + "computer" + q + " or typeof(obj) == " + q + "shell" + q + " then" + n
+    src = src + "  gco.slxObject = obj" + n
+    src = src + "end if" + n
+
+    srcFile.set_content(src)
+    print(c.orange + "Building scanner on router..." + c.ennd)
+    object.build("/home/guest/slx.src", "/home/guest", false)
+    binFile = rcomp.File("/home/guest/slx")
+    if not binFile then
+        print(c.yellow + "<b>scan -lib: build failed" + c.ennd)
+        srcFile.delete
+        mxf = rcomp.File("/home/guest/metaxploit.so")
+        if mxf then mxf.delete
+        return
+    end if
+
+    gco.slxLib    = libName
+    gco.slxMem    = mem
+    gco.slxVal    = val
+    gco.slxBounce = bounceIp
+    gco.slxType   = null
+    gco.slxObject = null
+    print(c.orange + "Bouncing to " + bounceIp + " via " + libName + " on router..." + c.ennd)
+    object.launch("/home/guest/slx")
+
+    // cleanup
+    srcFile.delete
+    binFile.delete
+    mxf = rcomp.File("/home/guest/metaxploit.so")
+    if mxf then mxf.delete
+
+    if not gco.slxType or gco.slxType == "null" then
+        print(c.yellow + "<b>scan -lib: exploit failed for " + bounceIp + c.ennd)
+        return
+    end if
+
+    print(c.green + "  [+] " + gco.slxType + " on " + bounceIp + c.ennd)
+
+    if gco.slxObject then
+        globals.object = gco.slxObject
+        globals.remotePath = "/"
+        GETPERMS(globals.object)
+        gco.slxObject = null
+    end if
+end function
+
+// ================================================================
+//  ENTRY POINT
+// ================================================================
+currentPath = program_path.split("/")[:-1].join("/")
+gco = get_custom_object
+
+metaxploit = include_lib(currentPath + "/metaxploit.so")
+if not metaxploit then metaxploit = include_lib("/lib/metaxploit.so")
+if not metaxploit then exit(c.yellow + "<b>phantom: metaxploit.so missing" + c.ennd)
+
+gco.crypto = include_lib("/lib/crypto.so")
+if not gco.crypto then gco.crypto = include_lib(currentPath + "/crypto.so")
+if not gco.crypto then exit(c.yellow + "<b>phantom: crypto.so missing" + c.ennd)
+
+import_code("/root/ai/tp/core.src")
+import_code("/root/ai/tp/recon.src")
+import_code("/root/ai/tp/hack.src")
+
+myShell      = get_shell
+myComp       = myShell.host_computer
+myPath       = currentPath
+remotePath   = "/"
+object       = null
+lObject      = null
+publicTarget = ""
+localTarget  = ""
+bounceTarget = ""
+objectStack  = []
+
+// -- headless mode: phantom --rshell [port]
+if params.len >= 1 and params[0] == "--rshell" then
+    port = 1222
+    if params.len >= 2 then port = params[1].to_int
+    rshelld = include_lib("/lib/librshell.so")
+    if not rshelld then rshelld = include_lib(currentPath + "/librshell.so")
+    if not rshelld then exit("phantom --rshell: librshell.so not found")
+    output = rshelld.install_service
+    if output != true then exit("phantom --rshell: install_service failed: " + output)
+    // rshelld installs to /server
+    svc = myComp.File("/server/rshelld")
+    if svc then
+        myShell.launch("/server/rshelld", "start")
+    else
+        svc = myComp.File("/etc/init.d/rshelld")
+        if svc then myShell.launch("/etc/init.d/rshelld", "start")
+    end if
+    exit("phantom: rshelld started on port " + port)
+end if
+
+Title
+print(c.grey + "type " + c.white + "<b>help</b>" + c.grey + " for commands.  ./ launches local binary.  r./ launches remote." + c.ennd + char(10))
+
+while true
+
+    print(char(10))
+    if publicTarget != "" then print(c.gold  + "public  target: " + publicTarget + c.ennd)
+    if localTarget  != "" then print(c.gold  + "local   target: " + localTarget  + c.ennd)
+    if bounceTarget != "" then print(c.gold  + "bounce  target: " + bounceTarget + c.ennd)
+    if lObject and typeof(lObject) == "shell" then
+        myShell = lObject
+        myComp  = lObject.host_computer
+        print(c.white + "<b>local shell: " + lObject.host_computer.get_name + c.ennd)
+    end if
+    if lObject and typeof(lObject) == "computer" then
+        myComp = lObject
+        print(c.white + "<b>local computer: " + lObject.get_name + c.ennd)
+    end if
+    if object and typeof(object) == "shell" then
+        print(c.orange + "<b>remote shell: " + c.yellow + object.host_computer.get_name + "  pub:" + object.host_computer.public_ip + "  lan:" + object.host_computer.local_ip + c.ennd)
+        print(c.orange + "remote path: " + c.yellow + remotePath + c.ennd)
+    end if
+    if object and typeof(object) == "computer" then
+        print(c.orange + "<b>remote computer: " + c.yellow + object.get_name + "  pub:" + object.public_ip + "  lan:" + object.local_ip + c.ennd)
+    end if
+    if object and typeof(object) == "file" then
+        print(c.orange + "<b>remote file: " + c.yellow + object.name + c.ennd)
+    end if
+
+    inp = user_input(c.cyan + "<b>" + active_user + c.ennd + c.grey + "@" + c.ennd + c.gold + myPath + c.ennd + c.white + " $ </b>" + c.ennd, false, false, true).split(" ")
+    if inp.len == 0 or inp[0] == "" then continue
+
+    cmd = inp[0]
+
+    // ── help ─────────────────────────────────────────────────────
+    if cmd == "help" then
+        if inp.len == 1 then ShowHelp(null) else ShowHelp(inp[1])
+
+    // ── ls ───────────────────────────────────────────────────────
+    else if cmd == "ls" then
+        Ls(inp, myPath, myComp, true)
+
+    // ── cd ───────────────────────────────────────────────────────
+    else if cmd == "cd" then
+        if inp.len == 1 then
+            globals.myPath = currentPath
+        else if inp[1] == ".." then
+            f = myComp.File(myPath).parent
+            if f then globals.myPath = f.path
+        else
+            f = GetFile(inp[1], myComp, true)
+            if f and f.is_folder then
+                globals.myPath = f.path
+            else
+                print(c.yellow + "<b>cd: not found" + c.ennd)
+            end if
+        end if
+
+    // ── cat ──────────────────────────────────────────────────────
+    else if cmd == "cat" then
+        if inp.len == 2 then Cat(inp[1], myComp, true) else print("<b>Usage: cat [file]")
+
+    // ── cp ───────────────────────────────────────────────────────
+    else if cmd == "cp" then
+        if inp.len == 3 then Cp(inp[1], inp[2], myComp, true) else print("<b>Usage: cp [src] [dst]")
+
+    // ── mv ───────────────────────────────────────────────────────
+    else if cmd == "mv" then
+        if inp.len == 3 then Mv(inp[1], inp[2], myComp, true) else print("<b>Usage: mv [src] [dst]")
+
+    // ── rm ───────────────────────────────────────────────────────
+    else if cmd == "rm" then
+        if inp.len == 2 then
+            Rm(inp[1], false, myComp, true)
+        else if inp.len == 3 and inp[1] == "-r" then
+            Rm(inp[2], true, myComp, true)
+        else
+            print("<b>Usage: rm [opt:-r] [path]")
+        end if
+
+    // ── mkdir ────────────────────────────────────────────────────
+    else if cmd == "mkdir" then
+        if inp.len == 2 then Mkdir(inp[1], myComp, true) else print("<b>Usage: mkdir [path]")
+
+    // ── touch ────────────────────────────────────────────────────
+    else if cmd == "touch" then
+        if inp.len == 2 then Touch(inp[1], myComp, true) else print("<b>Usage: touch [path/file]")
+
+    // ── chmod ────────────────────────────────────────────────────
+    else if cmd == "chmod" then
+        if inp.len == 3 then
+            Chmod(inp[1], inp[2], false, myComp, true)
+        else if inp.len == 4 and inp[1] == "-R" then
+            Chmod(inp[2], inp[3], true, myComp, true)
+        else
+            print("<b>Usage: chmod [opt:-R] [perms] [path]")
+        end if
+
+    // ── chown ────────────────────────────────────────────────────
+    else if cmd == "chown" then
+        if inp.len == 3 then
+            Chown(inp[1], inp[2], false, myComp, true)
+        else if inp.len == 4 and inp[1] == "-R" then
+            Chown(inp[2], inp[3], true, myComp, true)
+        else
+            print("<b>Usage: chown [opt:-R] [owner] [path]")
+        end if
+
+    // ── chgrp ────────────────────────────────────────────────────
+    else if cmd == "chgrp" then
+        if inp.len == 3 then
+            Chgrp(inp[1], inp[2], false, myComp, true)
+        else if inp.len == 4 and inp[1] == "-R" then
+            Chgrp(inp[2], inp[3], true, myComp, true)
+        else
+            print("<b>Usage: chgrp [opt:-R] [group] [path]")
+        end if
+
+    // ── search ───────────────────────────────────────────────────
+    else if cmd == "search" then
+        if inp.len == 1 then Search("", myComp) else Search(inp[1], myComp)
+
+    // ── ps ───────────────────────────────────────────────────────
+    else if cmd == "ps" then
+        print(myComp.show_procs)
+
+    // ── kill ─────────────────────────────────────────────────────
+    else if cmd == "kill" then
+        if inp.len >= 2 then Kill(inp[1], myComp) else print("<b>Usage: kill [PID]")
+
+    // ── passwd ───────────────────────────────────────────────────
+    else if cmd == "passwd" then
+        if inp.len == 2 then Passwd(inp[1], myComp) else print("<b>Usage: passwd [user]")
+
+    // ── useradd ──────────────────────────────────────────────────
+    else if cmd == "useradd" then
+        if inp.len == 2 then UserAdd(inp[1], myComp) else print("<b>Usage: useradd [user]")
+
+    // ── userdel ──────────────────────────────────────────────────
+    else if cmd == "userdel" then
+        if inp.len == 2 then
+            UserDel(inp[1], false, myComp)
+        else if inp.len == 3 and inp[1] == "-r" then
+            UserDel(inp[2], true, myComp)
+        else
+            print("<b>Usage: userdel [opt:-r] [user]")
+        end if
+
+    // ── pwd / whoami / clear ──────────────────────────────────────
+    else if cmd == "pwd" then
+        print(myPath)
+    else if cmd == "whoami" then
+        print(active_user)
+    else if cmd == "clear" then
+        clear_screen
+
+    // ── decipher ─────────────────────────────────────────────────
+    else if cmd == "decipher" then
+        if inp.len == 3 then
+            Decipher(inp[1], inp[2], myComp)
+        else
+            print("<b>Usage: decipher [-h user:hash] [-f /path/file]")
+        end if
+
+    // ── rshell ───────────────────────────────────────────────────
+    else if cmd == "rshell" then
+        RShell(inp[1:])
+
+    // ── cover ────────────────────────────────────────────────────
+    else if cmd == "cover" then
+        Cover
+
+    // ── corlog / escalate / drop ──────────────────────────────────
+    else if cmd == "corlog" then
+        CorruptLog(myComp)
+    else if cmd == "escalate" then
+        Escalate(myComp)
+    else if cmd == "drop" then
+        if inp.len == 2 then Drop(inp[1]) else print("<b>Usage: drop [-r] [-l]")
+
+    // ── terminal ─────────────────────────────────────────────────
+    else if cmd == "terminal" then
+        ans = user_input("Open local terminal? (y/n): ")
+        if ans == "y" then myShell.start_terminal
+
+    // ── ./ local binary ──────────────────────────────────────────
+    else if cmd.len >= 2 and cmd[:2] == "./" then
+        f = GetFile(cmd[2:], myComp, true)
+        if not f then
+            print(c.yellow + "<b>./: not found: " + cmd[2:] + c.ennd)
+        else if not f.is_binary then
+            print(c.yellow + "<b>./: not a binary" + c.ennd)
+        else if inp.len > 1 then
+            myShell.launch(f.path, inp[1:].join(" "))
+        else
+            myShell.launch(f.path)
+        end if
+
+    // ── randip ───────────────────────────────────────────────────
+    else if cmd == "randip" then
+        RandIp
+
+    // ── ping ─────────────────────────────────────────────────────
+    else if cmd == "ping" then
+        if inp.len == 2 then Ping(inp[1], myShell) else print("<b>Usage: ping [ip/pt/lt/bt]")
+
+    // ── whois ────────────────────────────────────────────────────
+    else if cmd == "whois" then
+        if inp.len == 2 then Whois(inp[1]) else print("<b>Usage: whois [public ip]")
+
+    // ── ifconfig ─────────────────────────────────────────────────
+    else if cmd == "ifconfig" then
+        Ifconfig(myComp)
+
+    // ── set / unset ───────────────────────────────────────────────
+    else if cmd == "set" then
+        if inp.len == 2 then
+            SetTarget(inp[1], null)
+        else if inp.len == 3 then
+            SetTarget(inp[1], inp[2])
+        else
+            print("<b>Usage: set [ip] [opt:-b]")
+        end if
+    else if cmd == "unset" then
+        if inp.len == 2 then
+            if inp[1] == "-p" or inp[1] == "-a" then globals.publicTarget = ""
+            if inp[1] == "-l" or inp[1] == "-a" then globals.localTarget  = ""
+            if inp[1] == "-b" or inp[1] == "-a" then globals.bounceTarget = ""
+        else
+            print("<b>Usage: unset [-p] [-l] [-b] [-a]")
+        end if
+
+    // ── ssh ──────────────────────────────────────────────────────
+    else if cmd == "ssh" then
+        if inp.len == 3 then
+            Ssh(inp[1], inp[2], null, myShell)
+        else if inp.len == 4 then
+            Ssh(inp[1], inp[2], inp[3], myShell)
+        else
+            print("<b>Usage: ssh [user@pass] [ip] [opt:port]")
+        end if
+
+    // ── scp ──────────────────────────────────────────────────────
+    else if cmd == "scp" then
+        if inp.len >= 4 then Scp(inp[1], inp[2], inp[3]) else print("<b>Usage: scp [-u|-d] [src] [dst]")
+
+    // ── nmap ─────────────────────────────────────────────────────
+    else if cmd == "nmap" then
+        if inp.len == 2 then Nmap(inp[1], myComp) else print("<b>Usage: nmap [ip/pt/lt]")
+
+    // ── scan ─────────────────────────────────────────────────────
+    else if cmd == "scan" then
+        if inp.len == 3 and inp[1] == "-l" then
+            Scan("-l", inp[2], myComp, null, null)
+        else if inp.len == 4 and inp[1] == "-l" then
+            Scan("-l", inp[2], myComp, inp[3], null)
+        else if inp.len == 3 then
+            Scan(inp[1], inp[2], myComp, null, null)
+        else if inp.len == 4 then
+            Scan(inp[1], inp[2], myComp, inp[3], null)
+        else if inp.len == 6 and inp[4] == "-lib" then
+            ScanRemoteLib(inp[1], inp[2], inp[3], inp[5])
+        else if inp.len == 8 and inp[4] == "-lib" then
+            ScanRemoteLib(inp[1], inp[2], inp[3], inp[5], inp[6], inp[7])
+        else
+            print("<b>Usage: scan [ip] [port] [lan-ip] -lib [lib.so] [opt:mem] [opt:val]")
+        end if
+
+    // ── grab ─────────────────────────────────────────────────────
+    else if cmd == "grab" then
+        if inp.len == 5 then
+            Grab(inp[1], inp[2], inp[3], inp[4], null)
+        else if inp.len == 6 then
+            Grab(inp[1], inp[2], inp[3], inp[4], inp[5])
+        else
+            print("<b>Usage: grab [ip/pt/lt] [port] [mem] [val] [opt:inject]")
+        end if
+
+    // ── getroot ──────────────────────────────────────────────────
+    else if cmd == "getroot" then
+        if inp.len == 3 and object then
+            GetRoot(inp[1], inp[2], object)
+        else if inp.len == 3 then
+            print(c.yellow + "<b>getroot: not holding remote shell" + c.ennd)
+        else
+            print("<b>Usage: getroot [path] [password]")
+        end if
+
+    // ── enum ─────────────────────────────────────────────────────
+    else if cmd == "enum" then
+        if inp.len != 2 then
+            print("<b>Usage: enum [-l] [-r]")
+        else if inp[1] == "-l" then
+            if lObject then Enum(lObject, lObject) else Enum(myComp, myComp)
+        else if inp[1] == "-r" then
+            if not object then
+                print(c.yellow + "<b>enum: not holding remote object" + c.ennd)
+            else if lObject then
+                Enum(lObject, object)
+            else
+                Enum(myComp, object)
+            end if
+        end if
+
+    // ── routerdata ───────────────────────────────────────────────
+    else if cmd == "routerdata" then
+        if inp.len == 2 then
+            RouterData(inp[1], null)
+        else if inp.len == 3 then
+            RouterData(inp[1], inp[2])
+        else
+            print("<b>Usage: routerdata [ip] [opt:port]")
+        end if
+
+    // ── r./ remote binary ─────────────────────────────────────────
+    else if cmd.len >= 3 and cmd[:3] == "r./" then
+        if typeof(object) != "shell" then
+            print(c.yellow + "<b>r./: not holding remote shell" + c.ennd)
+        else
+            rcomp = object.host_computer
+            bname = cmd[3:]
+            f = null
+            if bname.len > 0 and bname[0] == "/" then
+                f = rcomp.File(bname)
+            else
+                searchPaths = [remotePath, "/root", "/home/guest", "/bin", "/usr/bin"]
+                for sp in searchPaths
+                    candidate = rcomp.File(sp + "/" + bname)
+                    if candidate then
+                        f = candidate
+                        break
+                    end if
+                end for
+            end if
+            if not f then
+                print(c.yellow + "<b>r./: not found: " + bname + c.ennd)
+            else if not f.is_binary then
+                print(c.yellow + "<b>r./: not a binary: " + f.path + c.ennd)
+            else if inp.len > 1 then
+                object.launch(f.path, inp[1:].join(" "))
+            else
+                object.launch(f.path)
+            end if
+        end if
+
+    // ── rls ──────────────────────────────────────────────────────
+    else if cmd == "rls" then
+        if not object then
+            print(c.yellow + "<b>rls: not holding remote object" + c.ennd)
+        else
+            Ls(inp, remotePath, object, false)
+        end if
+
+    // ── rcd ──────────────────────────────────────────────────────
+    else if cmd == "rcd" then
+        if not object then
+            print(c.yellow + "<b>rcd: not holding remote object" + c.ennd)
+        else if inp.len == 1 then
+            globals.remotePath = "/"
+        else if inp[1] == ".." then
+            comp = object.host_computer
+            if typeof(object) != "shell" then comp = object
+            f = comp.File(remotePath).parent
+            if f then globals.remotePath = f.path
+        else
+            f = GetFile(inp[1], object, false)
+            if f and f.is_folder then
+                globals.remotePath = f.path
+            else
+                print(c.yellow + "<b>rcd: not found" + c.ennd)
+            end if
+        end if
+
+    // ── rcat ─────────────────────────────────────────────────────
+    else if cmd == "rcat" then
+        if not object then
+            print(c.yellow + "<b>rcat: not holding remote object" + c.ennd)
+        else if inp.len >= 2 then
+            Cat(inp[1], object, false)
+        else
+            print("<b>Usage: rcat [file]")
+        end if
+
+    // ── rcp ──────────────────────────────────────────────────────
+    else if cmd == "rcp" then
+        if not object then
+            print(c.yellow + "<b>rcp: not holding remote object" + c.ennd)
+        else if inp.len == 3 then
+            Cp(inp[1], inp[2], object, false)
+        else
+            print("<b>Usage: rcp [src] [dst]")
+        end if
+
+    // ── rmv ──────────────────────────────────────────────────────
+    else if cmd == "rmv" then
+        if not object then
+            print(c.yellow + "<b>rmv: not holding remote object" + c.ennd)
+        else if inp.len == 3 then
+            Mv(inp[1], inp[2], object, false)
+        else
+            print("<b>Usage: rmv [src] [dst]")
+        end if
+
+    // ── rrm ──────────────────────────────────────────────────────
+    else if cmd == "rrm" then
+        if not object then
+            print(c.yellow + "<b>rrm: not holding remote object" + c.ennd)
+        else if inp.len == 2 then
+            Rm(inp[1], false, object, false)
+        else if inp.len == 3 and inp[1] == "-r" then
+            Rm(inp[2], true, object, false)
+        else
+            print("<b>Usage: rrm [opt:-r] [path]")
+        end if
+
+    // ── rmkdir ───────────────────────────────────────────────────
+    else if cmd == "rmkdir" then
+        if not object then
+            print(c.yellow + "<b>rmkdir: not holding remote object" + c.ennd)
+        else if inp.len == 2 then
+            Mkdir(inp[1], object, false)
+        else
+            print("<b>Usage: rmkdir [path]")
+        end if
+
+    // ── rtouch ───────────────────────────────────────────────────
+    else if cmd == "rtouch" then
+        if not object then
+            print(c.yellow + "<b>rtouch: not holding remote object" + c.ennd)
+        else if inp.len == 2 then
+            Touch(inp[1], object, false)
+        else
+            print("<b>Usage: rtouch [path/file]")
+        end if
+
+    // ── rchmod ───────────────────────────────────────────────────
+    else if cmd == "rchmod" then
+        if not object then
+            print(c.yellow + "<b>rchmod: not holding remote object" + c.ennd)
+        else if inp.len == 3 then
+            Chmod(inp[1], inp[2], false, object, false)
+        else if inp.len == 4 and inp[1] == "-R" then
+            Chmod(inp[2], inp[3], true, object, false)
+        else
+            print("<b>Usage: rchmod [opt:-R] [perms] [path]")
+        end if
+
+    // ── rchown ───────────────────────────────────────────────────
+    else if cmd == "rchown" then
+        if not object then
+            print(c.yellow + "<b>rchown: not holding remote object" + c.ennd)
+        else if inp.len == 3 then
+            Chown(inp[1], inp[2], false, object, false)
+        else if inp.len == 4 and inp[1] == "-R" then
+            Chown(inp[2], inp[3], true, object, false)
+        else
+            print("<b>Usage: rchown [opt:-R] [owner] [path]")
+        end if
+
+    // ── rchgrp ───────────────────────────────────────────────────
+    else if cmd == "rchgrp" then
+        if not object then
+            print(c.yellow + "<b>rchgrp: not holding remote object" + c.ennd)
+        else if inp.len == 3 then
+            Chgrp(inp[1], inp[2], false, object, false)
+        else if inp.len == 4 and inp[1] == "-R" then
+            Chgrp(inp[2], inp[3], true, object, false)
+        else
+            print("<b>Usage: rchgrp [opt:-R] [group] [path]")
+        end if
+
+    // ── rsearch ──────────────────────────────────────────────────
+    else if cmd == "rsearch" then
+        if not object then
+            print(c.yellow + "<b>rsearch: not holding remote object" + c.ennd)
+        else if inp.len == 1 then
+            Search("", object)
+        else
+            Search(inp[1], object)
+        end if
+
+    // ── rps ──────────────────────────────────────────────────────
+    else if cmd == "rps" then
+        if not object then
+            print(c.yellow + "<b>rps: not holding remote object" + c.ennd)
+        else if typeof(object) == "shell" then
+            print(object.host_computer.show_procs)
+        else
+            print(object.show_procs)
+        end if
+
+    // ── rkill ────────────────────────────────────────────────────
+    else if cmd == "rkill" then
+        if not object then
+            print(c.yellow + "<b>rkill: not holding remote object" + c.ennd)
+        else if inp.len >= 2 then
+            Kill(inp[1], object)
+        else
+            print("<b>Usage: rkill [PID]")
+        end if
+
+    // ── rpasswd ──────────────────────────────────────────────────
+    else if cmd == "rpasswd" then
+        if not object then
+            print(c.yellow + "<b>rpasswd: not holding remote object" + c.ennd)
+        else if inp.len == 2 then
+            Passwd(inp[1], object)
+        else
+            print("<b>Usage: rpasswd [user]")
+        end if
+
+    // ── ruseradd ─────────────────────────────────────────────────
+    else if cmd == "ruseradd" then
+        if not object then
+            print(c.yellow + "<b>ruseradd: not holding remote object" + c.ennd)
+        else if inp.len == 2 then
+            UserAdd(inp[1], object)
+        else
+            print("<b>Usage: ruseradd [user]")
+        end if
+
+    // ── ruserdel ─────────────────────────────────────────────────
+    else if cmd == "ruserdel" then
+        if not object then
+            print(c.yellow + "<b>ruserdel: not holding remote object" + c.ennd)
+        else if inp.len == 2 then
+            UserDel(inp[1], false, object)
+        else if inp.len == 3 and inp[1] == "-r" then
+            UserDel(inp[2], true, object)
+        else
+            print("<b>Usage: ruserdel [opt:-r] [user]")
+        end if
+
+    // ── rcorlog / rterminal / rdecipher ──────────────────────────
+    else if cmd == "rcorlog" then
+        if not object then
+            print(c.yellow + "<b>rcorlog: not holding remote object" + c.ennd)
+        else
+            CorruptLog(object)
+        end if
+    else if cmd == "rterminal" then
+        Rterminal(object)
+    else if cmd == "rdecipher" then
+        if not object then
+            print(c.yellow + "<b>rdecipher: not holding remote object" + c.ennd)
+        else if inp.len == 3 then
+            Decipher(inp[1], inp[2], object)
+        else
+            print("<b>Usage: rdecipher [-h user:hash] [-f /path/file]")
+        end if
+
+    // ── push ─────────────────────────────────────────────────────
+    else if cmd == "push" then
+        if not object then
+            print(c.yellow + "<b>push: no active object to push" + c.ennd)
+        else
+            objectStack.push(object)
+            print(c.green + "pushed object to stack  [" + objectStack.len + " in stack]" + c.ennd)
+            if typeof(object) == "shell" then
+                print(c.grey + "  " + object.host_computer.public_ip + "  " + object.host_computer.local_ip + c.ennd)
+            end if
+        end if
+
+    // ── pop ──────────────────────────────────────────────────────
+    else if cmd == "pop" then
+        if objectStack.len == 0 then
+            print(c.yellow + "<b>pop: stack is empty" + c.ennd)
+        else
+            globals.object = objectStack.pop
+            globals.remotePath = "/"
+            print(c.green + "popped object from stack  [" + objectStack.len + " remaining]" + c.ennd)
+            GETPERMS(globals.object)
+        end if
+
+    // ── stack ─────────────────────────────────────────────────────
+    else if cmd == "stack" then
+        if objectStack.len == 0 then
+            print(c.grey + "stack is empty" + c.ennd)
+        else
+            print(c.cyan + "<b>" + objectStack.len + " object(s) in stack:" + c.ennd)
+            i = 1
+            for obj in objectStack
+                if typeof(obj) == "shell" then
+                    pub  = obj.host_computer.public_ip
+                    lan  = obj.host_computer.local_ip
+                    name = obj.host_computer.get_name
+                    print(c.gold + "  [" + i + "] " + c.ennd + c.white + "<b>shell</b>" + c.ennd + "  " + name + "  pub:" + c.cyan + pub + c.ennd + "  lan:" + c.cyan + lan + c.ennd)
+                else if typeof(obj) == "computer" then
+                    pub  = obj.public_ip
+                    lan  = obj.local_ip
+                    name = obj.get_name
+                    print(c.gold + "  [" + i + "] " + c.ennd + c.white + "<b>computer</b>" + c.ennd + "  " + name + "  pub:" + c.cyan + pub + c.ennd + "  lan:" + c.cyan + lan + c.ennd)
+                else
+                    print(c.gold + "  [" + i + "] " + c.ennd + typeof(obj) + c.ennd)
+                end if
+                i = i + 1
+            end for
+        end if
+
+    // ── swap ─────────────────────────────────────────────────────
+    else if cmd == "swap" then
+        if objectStack.len == 0 then
+            print(c.yellow + "<b>swap: stack is empty" + c.ennd)
+        else if inp.len == 2 then
+            idx = inp[1].to_int - 1
+            if typeof(idx) != "number" or idx < 0 or idx >= objectStack.len then
+                print(c.yellow + "<b>swap: invalid index" + c.ennd)
+            else
+                // swap current object with stack entry
+                prev = object
+                globals.object = objectStack[idx]
+                objectStack[idx] = prev
+                globals.remotePath = "/"
+                print(c.green + "swapped to stack [" + (idx+1) + "]" + c.ennd)
+                GETPERMS(globals.object)
+            end if
+        else
+            // swap with top of stack
+            if not object then
+                globals.object = objectStack.pop
+            else
+                prev = object
+                globals.object = objectStack.pop
+                objectStack.push(prev)
+            end if
+            globals.remotePath = "/"
+            print(c.green + "swapped with top of stack" + c.ennd)
+            GETPERMS(globals.object)
+        end if
+    else if cmd == "autoharvest" then
+        if inp.len == 3 then
+            AutoHarvest(inp[1].to_int, inp[2].to_int)
+        else if inp.len == 2 then
+            AutoHarvest(inp[1].to_int, 5)
+        else
+            AutoHarvest(1, 5)
+        end if
+
+    // ── proxy ────────────────────────────────────────────────────
+    else if cmd == "proxy" then
+        if inp.len == 2 then
+            Proxy(inp[1].to_int)
+        else
+            Proxy(1)
+        end if
+        // autoroot the final hop automatically
+        if gco.hasIndex("proxyReady") and gco.proxyReady then
+            gco.proxyReady = false
+            print(char(10) + c.orange + "Autorooting final hop..." + c.ennd)
+            AutoRoot(null, null, null)
+        end if
+
+    // ── proxystatus ──────────────────────────────────────────────
+    else if cmd == "proxystatus" then
+        ProxyStatus
+
+    // ── proxyclear ───────────────────────────────────────────────
+    else if cmd == "proxyclear" then
+        ProxyClear
+
+    // ── harvest ──────────────────────────────────────────────────
+    else if cmd == "harvest" then
+        Harvest
+
+    // ── netmap ───────────────────────────────────────────────────
+    else if cmd == "netmap" then
+        NetMap
+
+    // ── hacklan ──────────────────────────────────────────────────
+    else if cmd == "hacklan" then
+        if inp.len == 2 then
+            HackLan(inp[1])
+        else
+            print("<b>Usage: hacklan [lan-ip]")
+        end if
+
+    // ── wifi ─────────────────────────────────────────────────────
+    else if cmd == "wifi" then
+        WiFiCrack
+
+    // ── wstack ───────────────────────────────────────────────────
+    else if cmd == "wstack" then
+        WStack
+
+    // ── weaklib ──────────────────────────────────────────────────
+    else if cmd == "weaklib" then
+        WeakLib
+
+    // ── pwnlan ───────────────────────────────────────────────────
+    else if cmd == "pwnlan" then
+        PwnLan
+
+    // ── lscan ────────────────────────────────────────────────────
+    else if cmd == "lscan" then
+        LocalScan
+
+    // ── propagate ────────────────────────────────────────────────
+    else if cmd == "propagate" then
+        if inp.len == 2 and inp[1] == "--rshell" then
+            Propagate(true)
+        else
+            Propagate(false)
+        end if
+
+    // ── autoroot ─────────────────────────────────────────────────
+    else if cmd == "autoroot" then
+        if inp.len == 4 then
+            AutoRoot(inp[1], inp[2], inp[3])
+        else if inp.len == 1 then
+            AutoRoot(null, null, null)
+        else
+            print("<b>Usage: autoroot  |  autoroot [ip] [user] [pass]")
+        end if
+
+    // ── rtgen ─────────────────────────────────────────────────────
+    else if cmd == "rtgen" then
+        RTGen
+
+    // ── buildrt ──────────────────────────────────────────────────
+    else if cmd == "buildrt" then
+        gco.rt = null
+        buildRainbowTable
+
+    // ── crack ────────────────────────────────────────────────────
+    else if cmd == "crack" then
+        if inp.len == 2 then
+            if not gco.hasIndex("rt") or gco.rt == null then buildRainbowTable
+            result = CrackHash(inp[1])
+            if result then
+                print(c.gold + "<b>cracked: " + result + c.ennd)
+            else
+                print(c.yellow + "<b>crack: hash not found in table" + c.ennd)
+            end if
+        else
+            print("<b>Usage: crack [hash]")
+        end if
+
+    // ── exit / quit ──────────────────────────────────────────────
+    else if cmd == "exit" or cmd == "quit" then
+        exit
+
+    // ── unknown ──────────────────────────────────────────────────
+    else
+        print(c.yellow + "<b>phantom: " + cmd + ": command not found" + c.ennd)
+    end if
+
+end while
