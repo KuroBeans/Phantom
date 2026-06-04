@@ -223,6 +223,81 @@ Scan = function(ip, port, comp, inject, libName)
             return
         end if
     end if
+    // check db.txt for known exploits for this lib — skip scanning if found
+    dbFile = myComp.File(currentPath + "/db.txt")
+    if dbFile and typeof(dbFile) == "file" then
+        content = dbFile.get_content
+        if content and content != "" then
+            matches = []
+            for line in content.split(char(10))
+                if line == "" then continue
+                line = line.replace(char(13), "")
+                p1 = line.indexOf("|")
+                if p1 == null then continue
+                p2 = line.indexOf("|", p1 + 1)
+                if p2 == null then continue
+                p3 = line.indexOf("|", p2 + 1)
+                if p3 != null then
+                    libName = line[:p1]
+                    libVer  = line[p1+1:p2]
+                    memAddr = line[p2+1:p3]
+                    valStr  = line[p3+1:]
+                else
+                    libName = line[:p1]
+                    libVer  = ""
+                    memAddr = line[p1+1:p2]
+                    valStr  = line[p2+1:]
+                end if
+                // only match if lib name AND version match
+                if libName == metalib.lib_name and libVer == metalib.version and memAddr.len > 5 and valStr.len > 2 then
+                    matches.push({"mem": memAddr, "val": valStr})
+                end if
+            end for
+        if matches.len > 0 then
+            print(c.green + "  edb hit: " + matches.len + " known exploit(s) for " + metalib.lib_name + " " + metalib.version + " — trying stored exploits" + c.ennd)
+            shells = 0
+            files  = 0
+            comps  = 0
+            gotResult = false
+            for e in matches
+                mem = e["mem"]
+                val = e["val"]
+                if inject then
+                    obj = metalib.overflow(mem, val, inject)
+                else
+                    obj = metalib.overflow(mem, val)
+                end if
+                if typeof(obj) == "shell" then
+                    print(char(10) + c.orange + "<b>" + mem + " " + val + c.ennd)
+                    print("<b>shell   : " + c.yellow + obj + c.ennd)
+                    shells = shells + 1
+                    gotResult = true
+                    GETPERMS(obj)
+                end if
+                if typeof(obj) == "computer" then
+                    print(char(10) + c.orange + "<b>" + mem + " " + val + c.ennd)
+                    print("<b>computer: " + c.yellow + obj + c.ennd)
+                    comps = comps + 1
+                    gotResult = true
+                    GETPERMS(obj)
+                end if
+                if typeof(obj) == "file" then
+                    print(char(10) + c.orange + "<b>" + mem + " " + val + c.ennd)
+                    print("<b>file    : " + c.yellow + obj.name + c.ennd)
+                    files = files + 1
+                    gotResult = true
+                end if
+            end for
+            if gotResult then
+                print(char(10) + c.gold + "lib: " + metalib.lib_name + " " + metalib.version + c.ennd)
+                print(c.orange + "shells: " + shells + "  files: " + files + "  computers: " + comps + c.ennd)
+                return
+            end if
+            // no results from edb — fall through to full scan
+            print(c.grey + "  edb exploits failed — running full scan..." + c.ennd)
+        end if
+    end if
+
     memList = metaxploit.scan(metalib)
     if not memList then
         print(c.yellow + "<b>scan: no vulnerabilities found" + c.ennd)
@@ -236,7 +311,7 @@ Scan = function(ip, port, comp, inject, libName)
         for res in results
             if res == results[0] then continue
             val = res[res.indexOf("<b>") + 3 : res.indexOf("</b>")]
-            print(char(10) + c.orange + "<b>" + mem + " " + val + c.ennd)
+            print(char(10) + c.orange + "<b>" + mem + "  " + val + c.ennd)
             if inject then
                 obj = metalib.overflow(mem, val, inject)
             else
@@ -246,11 +321,13 @@ Scan = function(ip, port, comp, inject, libName)
                 print("<b>shell   : " + c.yellow + obj + c.ennd)
                 shells = shells + 1
                 GETPERMS(obj)
+                EdbAdd(metalib.lib_name, metalib.version, mem, val)
             end if
             if typeof(obj) == "computer" then
                 print("<b>computer: " + c.yellow + obj + c.ennd)
                 comps = comps + 1
                 GETPERMS(obj)
+                EdbAdd(metalib.lib_name, metalib.version, mem, val)
             end if
             if typeof(obj) == "file" then
                 print("<b>file    : " + c.yellow + obj.name + c.ennd)
@@ -260,6 +337,28 @@ Scan = function(ip, port, comp, inject, libName)
     end for
     print(char(10) + c.gold + "lib: " + metalib.lib_name + " " + metalib.version + c.ennd)
     print(c.orange + "shells: " + shells + "  files: " + files + "  computers: " + comps + c.ennd)
+
+    // suggest grab if matching version exploit in db
+    dbFile2 = myComp.File(currentPath + "/db.txt")
+    if dbFile2 and typeof(dbFile2) == "file" then
+        dbContent2 = dbFile2.get_content
+        if dbContent2 and dbContent2 != "" then
+            for line in dbContent2.split(char(10))
+                if line == "" then continue
+                line = line.replace(char(13), "")
+                p1 = line.indexOf("|")
+                if p1 == null then continue
+                p2 = line.indexOf("|", p1 + 1)
+                if p2 == null then continue
+                p3 = line.indexOf("|", p2 + 1)
+                if p3 == null then continue
+                if line[:p1] == metalib.lib_name and line[p1+1:p2] == metalib.version then
+                    print(char(10) + c.green + "  edb tip: " + c.ennd + c.grey + "grab " + ip + " " + port + " " + line[p2+1:p3] + " " + line[p3+1:] + c.ennd)
+                    break
+                end if
+            end for
+        end if
+    end if
 end function
 
 // ── Grab ─────────────────────────────────────────────────────────
@@ -285,6 +384,43 @@ Grab = function(ip, port, mem, val, inject)
         print(c.yellow + "<b>grab: metalib not obtained" + c.ennd)
         return
     end if
+
+    // if no mem/val provided, check db.txt directly
+    if not mem or mem == "" then
+        dbFile = myComp.File(currentPath + "/db.txt")
+        if dbFile and typeof(dbFile) == "file" then
+            dbContent = dbFile.get_content
+            if dbContent and dbContent != "" then
+                for line in dbContent.split(char(10))
+                    if mem then break
+                    if line == "" then continue
+                    line = line.replace(char(13), "")
+                    p1 = line.indexOf("|")
+                    if p1 == null then continue
+                    p2 = line.indexOf("|", p1 + 1)
+                    if p2 == null then continue
+                    p3 = line.indexOf("|", p2 + 1)
+                    if p3 != null then
+                        if line[:p1] == metalib.lib_name and line[p1+1:p2] == metalib.version then
+                            mem = line[p2+1:p3]
+                            val = line[p3+1:]
+                        end if
+                    else
+                        if line[:p1] == metalib.lib_name then
+                            mem = line[p1+1:p2]
+                            val = line[p2+1:]
+                        end if
+                    end if
+                end for
+            end if
+        end if
+        if not mem or mem == "" then
+            print(c.yellow + "<b>grab: no mem/val and no db.txt entry for " + metalib.lib_name + c.ennd)
+            return
+        end if
+        print(c.green + "  db: using " + metalib.lib_name + "  " + mem + "  " + val + c.ennd)
+    end if
+
     if inject then
         globals.object = metalib.overflow(mem, val, inject)
     else
@@ -569,6 +705,14 @@ Scp = function(flag, orig, dest)
         print(c.yellow + "<b>scp: need remote shell" + c.ennd)
         return
     end if
+    if not orig or orig == "" then
+        print(c.yellow + "<b>scp: missing source path" + c.ennd)
+        return
+    end if
+    if not dest or dest == "" then
+        print(c.yellow + "<b>scp: missing destination path" + c.ennd)
+        return
+    end if
     if flag == "-u" then myShell.scp(orig, dest, object)
     if flag == "-d" then object.scp(orig, dest, myShell)
 end function
@@ -593,7 +737,41 @@ SetTarget = function(ip, flag)
     print(c.cyan + "public target: " + ip + c.ennd)
 end function
 
-// ── Ls ───────────────────────────────────────────────────────────
+// ── Tree ─────────────────────────────────────────────────────────
+Tree = function(path, obj, local, prefix)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    if prefix == null then
+        f = GetFile(path, obj, local)
+        if not f then
+            print(c.yellow + "<b>tree: not found: " + path + c.ennd)
+            return
+        end if
+        print(c.cyan + "<b>" + f.path + c.ennd)
+        prefix = ""
+    end if
+    f = GetFile(path, obj, local)
+    if not f then return
+    items = f.get_folders + f.get_files
+    i = 0
+    for item in items
+        isLast = (i == items.len - 1)
+        connector = "├── "
+        nextPrefix = prefix + "│   "
+        if isLast then
+            connector = "└── "
+            nextPrefix = prefix + "    "
+        end if
+        if item.is_folder then
+            print(c.grey + prefix + connector + c.ennd + c.gold + "<b>" + item.name + "/" + c.ennd)
+            Tree(item.path, obj, local, nextPrefix)
+        else
+            col = c.white
+            if item.is_binary then col = c.cyan
+            print(c.grey + prefix + connector + c.ennd + col + item.name + c.ennd)
+        end if
+        i = i + 1
+    end for
+end function
 Ls = function(inp, path, obj, local)
     if typeof(obj) == "shell" then obj = obj.host_computer
     folderPath = path
@@ -963,6 +1141,7 @@ ShowHelp = function(flag)
     if flag == "-a" or flag == "-l" then
         print(char(10) + c.lime + "<b>── LOCAL ────────────────────────────────────────────────────" + c.ennd + char(10))
         print(c.yellow+"<b>ls</b>"+c.ennd+"         ls [opt:-l -a] [opt:path]")
+        print(c.yellow+"<b>tree</b>"+c.ennd+"       tree [opt:path]  (visual file tree)")
         print(c.yellow+"<b>cd</b>"+c.ennd+"         cd [path]  /  cd ..")
         print(c.yellow+"<b>cat</b>"+c.ennd+"        cat [file]")
         print(c.yellow+"<b>cp</b>"+c.ennd+"         cp [src] [dst]")
@@ -1011,7 +1190,7 @@ ShowHelp = function(flag)
     end if
     if flag == "-a" or flag == "-h" then
         print(char(10) + c.lime + "<b>── HACKING ──────────────────────────────────────────────────" + c.ennd + char(10))
-        print(c.yellow+"<b>scan</b>"+c.ennd+"       scan [ip] [port] [opt:lan-ip]")
+        print(c.yellow+"<b>edb</b>"+c.ennd+"        edb  |  edb use/search/add/del/clear  (exploit database)")
         print(c.yellow+"<b>scan</b>"+c.ennd+"       scan [ip] [port] [lan-ip] -lib [lib.so] [opt:mem] [opt:val]")
         print(c.yellow+"<b>grab</b>"+c.ennd+"       grab [ip] [port] [mem] [val] [opt:inject]")
         print(c.yellow+"<b>getroot</b>"+c.ennd+"    getroot [path] [password]")
@@ -1028,12 +1207,13 @@ ShowHelp = function(flag)
         print(c.yellow+"<b>buildrt</b>"+c.ennd+"    build rainbow table in memory")
         print(c.yellow+"<b>rtgen</b>"+c.ennd+"      rtgen  (build + write rainbow table to ~/rt/)")
         print(c.yellow+"<b>crack</b>"+c.ennd+"      crack [hash]")
-        print(c.yellow+"<b>propagate</b>"+c.ennd+"  propagate [opt:--rshell]  (copy phantom to target)")
+        print(c.yellow+"<b>jump</b>"+c.ennd+"       jump [opt:--rshell]  (copy phantom to target)")
         print(c.yellow+"<b>rshell</b>"+c.ennd+"     rshell  |  rshell start/stop/init/infect/info")
     end if
     if flag == "-a" or flag == "-r" then
         print(char(10) + c.lime + "<b>── REMOTE ───────────────────────────────────────────────────" + c.ennd + char(10))
         print(c.yellow+"<b>rls</b>"+c.ennd+"        rls [opt:path]")
+        print(c.yellow+"<b>rtree</b>"+c.ennd+"      rtree [opt:path]  (visual file tree on remote)")
         print(c.yellow+"<b>rcd</b>"+c.ennd+"        rcd [path]")
         print(c.yellow+"<b>rcat</b>"+c.ennd+"       rcat [file]")
         print(c.yellow+"<b>rcp rmv rrm</b>"+c.ennd+"  rcp/rmv/rrm [opt:-r] [src] [dst]")
@@ -1059,7 +1239,7 @@ ShowHelp = function(flag)
         print(c.grey + "  autoroot            → escalate to root" + c.ennd)
         print(c.grey + "  weaklib             → harvest whole LAN" + c.ennd)
         print(c.grey + "  scan pt 0 [lanip] -lib libhttp.so  → bounce to LAN device" + c.ennd)
-        print(c.grey + "  propagate --rshell  → set up rshell server on target" + c.ennd)
+        print(c.grey + "  jump --rshell       → set up rshell server on target" + c.ennd)
         print(c.grey + "  push/pop/stack/swap → juggle multiple objects" + c.ennd)
         print(c.grey + "  cover               → clean up traces" + c.ennd)
     end if
@@ -1689,7 +1869,8 @@ end function
 // ================================================================
 //  ENTRY POINT
 // ================================================================
-currentPath = program_path.split("/")[:-1].join("/")
+globals.currentPath = program_path.split("/")[:-1].join("/")
+currentPath = globals.currentPath
 gco = get_custom_object
 
 metaxploit = include_lib(currentPath + "/metaxploit.so")
@@ -1714,6 +1895,45 @@ publicTarget = ""
 localTarget  = ""
 bounceTarget = ""
 objectStack  = []
+
+// auto-create db.txt if missing
+if not myComp.File(currentPath + "/db.txt") then
+    myComp.touch(currentPath, "db.txt")
+end if
+
+// auto-load exploit db if it exists
+globals.edb = []
+dbFile = myComp.File(currentPath + "/db.txt")
+if dbFile and typeof(dbFile) == "file" then
+    content = dbFile.get_content
+    if content and content != "" then
+        for line in content.split(char(10))
+            if line == "" then continue
+            line = line.replace(char(13), "")
+            if line == "" then continue
+            p1 = line.indexOf("|")
+            if p1 == null then continue
+            p2 = line.indexOf("|", p1 + 1)
+            if p2 == null then continue
+            p3 = line.indexOf("|", p2 + 1)
+            entry = {}
+            if p3 != null then
+                entry["lib"] = line[:p1]
+                entry["ver"] = line[p1+1:p2]
+                entry["mem"] = line[p2+1:p3]
+                entry["val"] = line[p3+1:]
+            else
+                entry["lib"] = line[:p1]
+                entry["ver"] = ""
+                entry["mem"] = line[p1+1:p2]
+                entry["val"] = line[p2+1:]
+            end if
+            if entry["lib"] == "" or entry["mem"] == "" or entry["val"] == "" then continue
+            globals.edb.push(entry)
+        end for
+        print(c.grey + "edb: loaded " + globals.edb.len + " exploit(s) from db.txt" + c.ennd)
+    end if
+end if
 
 // -- headless mode: phantom --rshell [port]
 if params.len >= 1 and params[0] == "--rshell" then
@@ -1772,6 +1992,22 @@ while true
     // ── help ─────────────────────────────────────────────────────
     if cmd == "help" then
         if inp.len == 1 then ShowHelp(null) else ShowHelp(inp[1])
+
+    // ── tree ─────────────────────────────────────────────────────
+    else if cmd == "tree" then
+        path = myPath
+        if inp.len == 2 then path = inp[1]
+        Tree(path, myComp, true, null)
+
+    // ── rtree ────────────────────────────────────────────────────
+    else if cmd == "rtree" then
+        if not object then
+            print(c.yellow + "<b>rtree: not holding remote object" + c.ennd)
+        else
+            path = remotePath
+            if inp.len == 2 then path = inp[1]
+            Tree(path, object, false, null)
+        end if
 
     // ── ls ───────────────────────────────────────────────────────
     else if cmd == "ls" then
@@ -2005,12 +2241,14 @@ while true
 
     // ── grab ─────────────────────────────────────────────────────
     else if cmd == "grab" then
-        if inp.len == 5 then
+        if inp.len == 3 then
+            Grab(inp[1], inp[2], null, null, null)
+        else if inp.len == 5 then
             Grab(inp[1], inp[2], inp[3], inp[4], null)
         else if inp.len == 6 then
             Grab(inp[1], inp[2], inp[3], inp[4], inp[5])
         else
-            print("<b>Usage: grab [ip/pt/lt] [port] [mem] [val] [opt:inject]")
+            print("<b>Usage: grab [ip] [port] [opt:mem] [opt:val] [opt:inject]")
         end if
 
     // ── getroot ──────────────────────────────────────────────────
@@ -2286,6 +2524,10 @@ while true
             print("<b>Usage: rdecipher [-h user:hash] [-f /path/file]")
         end if
 
+    // ── edb ──────────────────────────────────────────────────────
+    else if cmd == "edb" then
+        ExploitDB(inp[1:])
+
     // ── push ─────────────────────────────────────────────────────
     else if cmd == "push" then
         if not object then
@@ -2364,6 +2606,7 @@ while true
             print(c.green + "swapped with top of stack" + c.ennd)
             GETPERMS(globals.object)
         end if
+    // ── autoharvest ──────────────────────────────────────────────
     else if cmd == "autoharvest" then
         if inp.len == 3 then
             AutoHarvest(inp[1].to_int, inp[2].to_int)
@@ -2431,8 +2674,8 @@ while true
     else if cmd == "lscan" then
         LocalScan
 
-    // ── propagate ────────────────────────────────────────────────
-    else if cmd == "propagate" then
+    // ── jump ─────────────────────────────────────────────────────
+    else if cmd == "jump" then
         if inp.len == 2 and inp[1] == "--rshell" then
             Propagate(true)
         else
