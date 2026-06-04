@@ -421,6 +421,32 @@ Harvest = function()
     end for
 
     print(char(10) + c.grey + "----------------------------------------------------------------" + c.ennd)
+
+    // also crack /etc/passwd
+    pf = comp.File("/etc/passwd")
+    if pf and pf.has_permission("r") then
+        content = pf.get_content
+        if content and content != "" then
+            print(c.orange + char(10) + "  /etc/passwd" + c.ennd)
+            for line in content.split(char(10))
+                if line == "" then continue
+                parts = line.split(":")
+                if parts.len < 2 then continue
+                user2 = parts[0]
+                hash  = parts[1]
+                total = total + 1
+                pw = CrackHash(hash)
+                if pw then
+                    print(c.lime + "      " + user2 + c.ennd + c.grey + " : " + c.ennd + c.gold + "<b>" + pw + c.ennd + c.grey + "  [SSH]" + c.ennd)
+                    cracked = cracked + 1
+                else
+                    print(c.white + "      " + user2 + c.ennd + c.grey + " : " + c.ennd + c.red + "not found  " + c.grey + "[" + hash[:12] + "...]" + c.ennd)
+                end if
+            end for
+        end if
+    end if
+
+    print(char(10) + c.grey + "----------------------------------------------------------------" + c.ennd)
     print(c.cyan + "harvest complete — cracked " + cracked + "/" + total + " hashes" + c.ennd)
 end function
 // wifi.src  |  phantom module  |  wifi cracker
@@ -553,4 +579,194 @@ WiFiCrack = function()
     print(c.orange + "Stopping monitor mode..." + c.ennd)
     gco.crypto.airmon("stop", wifiInterface)
     print(c.green + "wifi: done" + c.ennd)
+end function
+
+// ── EdbSave helper ───────────────────────────────────────────────
+EdbSave = function()
+    if globals.edb == null then return
+    if globals.edb.len == 0 then return
+    out = ""
+    for e in globals.edb
+        ver = ""
+        if e.hasIndex("ver") then ver = e["ver"]
+        out = out + e["lib"] + "|" + ver + "|" + e["mem"] + "|" + e["val"] + char(10)
+    end for
+    savePath = globals.currentPath
+    if not savePath or savePath == "" then
+        print(c.yellow + "edb: globals.currentPath not set — cannot save" + c.ennd)
+        return
+    end if
+    comp = get_shell.host_computer
+    f = comp.File(savePath + "/db.txt")
+    if not f then
+        comp.touch(savePath, "db.txt")
+        f = comp.File(savePath + "/db.txt")
+    end if
+    if f and typeof(f) == "file" then
+        f.set_content(out)
+    end if
+end function
+
+// ── EdbAdd helper ────────────────────────────────────────────────
+EdbAdd = function(libName, libVer, memAddr, valStr)
+    if not libName or libName == "" or not memAddr or memAddr == "" or not valStr or valStr == "" then return
+    if globals.edb == null then globals.edb = []
+    for ex in globals.edb
+        if ex["lib"] == libName and ex["mem"] == memAddr and ex["val"] == valStr then return
+    end for
+    entry = {}
+    entry["lib"] = libName
+    entry["ver"] = libVer
+    entry["mem"] = memAddr
+    entry["val"] = valStr
+    globals.edb.push(entry)
+    EdbSave()
+end function
+ExploitDB = function(args)
+    if globals.edb == null then globals.edb = []
+    dbPath = globals.currentPath + "/db.txt"
+    comp = get_shell.host_computer
+    cmd = ""
+    if args.len > 0 then cmd = args[0]
+
+    // edb — list all
+    if cmd == "" or cmd == "list" then
+        if globals.edb.len == 0 then
+            print(c.grey + "edb: empty — use 'edb add' or run scan" + c.ennd)
+            return
+        end if
+        print(char(10) + c.cyan + "<b>EXPLOIT DB  (" + globals.edb.len + " entries)" + c.ennd)
+        div
+        i = 1
+        for e in globals.edb
+            ver = ""
+            if e.hasIndex("ver") and e["ver"] != "" then ver = " " + e["ver"]
+            mem = e.hasIndex("mem") and e["mem"] or "?"
+            val = e.hasIndex("val") and e["val"] or "?"
+            print(c.gold + "  [" + i + "] " + c.ennd + c.white + "<b>" + e["lib"] + ver + c.ennd + c.grey + "  " + mem + "  " + val + c.ennd)
+            i = i + 1
+        end for
+        return
+    end if
+
+    // edb add [lib] [mem] [val]
+    if cmd == "add" then
+        if args.len < 4 then
+            print(c.yellow + "<b>Usage: edb add [lib] [mem] [val]" + c.ennd)
+            return
+        end if
+        entry = {}
+        entry["lib"] = args[1]
+        entry["mem"] = args[2]
+        entry["val"] = args[3]
+        globals.edb.push(entry)
+        print(c.green + "edb: added " + args[1] + "  " + args[2] + "  " + args[3] + "  [" + globals.edb.len + " total]" + c.ennd)
+        return
+    end if
+
+    // edb use [#] [opt:bounceIp] — grab using stored exploit
+    if cmd == "use" then
+        if args.len < 2 then
+            print(c.yellow + "<b>Usage: edb use [index] [opt:bounce-ip]" + c.ennd)
+            return
+        end if
+        idx = args[1].to_int - 1
+        if typeof(idx) != "number" or idx < 0 or idx >= globals.edb.len then
+            print(c.yellow + "<b>edb: invalid index" + c.ennd)
+            return
+        end if
+        e = globals.edb[idx]
+        if args.len >= 3 then
+            ScanRemoteLib(publicTarget, "0", args[2], e["lib"], e["mem"], e["val"])
+        else
+            Grab(publicTarget, "0", e["mem"], e["val"], null)
+        end if
+        return
+    end if
+
+    // edb save — write to disk
+    if cmd == "save" then
+        if globals.edb.len == 0 then
+            print(c.yellow + "<b>edb: nothing to save" + c.ennd)
+            return
+        end if
+        EdbSave()
+        print(c.green + "edb: saved " + globals.edb.len + " entries to db.txt" + c.ennd)
+        return
+    end if
+
+    // edb load — read from disk
+    if cmd == "load" then
+        f = comp.File(dbPath)
+        if not f or typeof(f) != "file" then
+            print(c.yellow + "<b>edb: db.txt not found at " + dbPath + c.ennd)
+            return
+        end if
+        content = f.get_content
+        if not content or content == "" then
+            print(c.yellow + "<b>edb: db.txt is empty" + c.ennd)
+            return
+        end if
+        globals.edb = []
+        loaded = 0
+        for line in content.split(char(10))
+            if line == "" then continue
+            line = line.replace(char(13), "")
+            if line == "" then continue
+            // split on first 3 pipes only
+            p1 = line.indexOf("|")
+            if p1 == null then continue
+            p2 = line.indexOf("|", p1 + 1)
+            if p2 == null then continue
+            p3 = line.indexOf("|", p2 + 1)
+            entry = {}
+            if p3 != null then
+                entry["lib"] = line[:p1]
+                entry["ver"] = line[p1+1:p2]
+                entry["mem"] = line[p2+1:p3]
+                entry["val"] = line[p3+1:]
+            else
+                entry["lib"] = line[:p1]
+                entry["ver"] = ""
+                entry["mem"] = line[p1+1:p2]
+                entry["val"] = line[p2+1:]
+            end if
+            if entry["lib"] == "" or entry["mem"] == "" or entry["val"] == "" then continue
+            globals.edb.push(entry)
+            loaded = loaded + 1
+        end for
+        print(c.green + "edb: loaded " + loaded + " entries from db.txt" + c.ennd)
+        return
+    end if
+
+    // edb del [#]
+    if cmd == "del" then
+        if args.len < 2 then
+            print(c.yellow + "<b>Usage: edb del [index]" + c.ennd)
+            return
+        end if
+        idx = args[1].to_int - 1
+        if typeof(idx) != "number" or idx < 0 or idx >= globals.edb.len then
+            print(c.yellow + "<b>edb: invalid index" + c.ennd)
+            return
+        end if
+        globals.edb.remove(idx)
+        print(c.green + "edb: deleted entry " + (idx+1) + c.ennd)
+        return
+    end if
+
+    // edb clear
+    if cmd == "clear" then
+        globals.edb = []
+        print(c.green + "edb: cleared" + c.ennd)
+        return
+    end if
+
+    print(c.grey + "edb               list all entries" + c.ennd)
+    print(c.grey + "edb add [lib] [mem] [val]   add entry" + c.ennd)
+    print(c.grey + "edb use [#] [opt:lan-ip]    use exploit" + c.ennd)
+    print(c.grey + "edb save          write to db.txt" + c.ennd)
+    print(c.grey + "edb load          load from db.txt" + c.ennd)
+    print(c.grey + "edb del [#]       delete entry" + c.ennd)
+    print(c.grey + "edb clear         clear all" + c.ennd)
 end function
