@@ -142,8 +142,10 @@ Proxy = function(hops)
                 obj = ml.overflow(mem, val)
                 if typeof(obj) == "shell" then
                     shell = obj
+                    EdbAdd(ml.lib_name, ml.version, mem, val)
                 else if typeof(obj) == "computer" then
                     shell = obj
+                    EdbAdd(ml.lib_name, ml.version, mem, val)
                 end if
             end for
         end for
