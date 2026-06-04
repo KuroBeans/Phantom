@@ -212,6 +212,15 @@ WeakLib = function()
     harvSrc = harvSrc + "      end for" + n
     harvSrc = harvSrc + "    end for" + n
     harvSrc = harvSrc + "  end for" + n
+    harvSrc = harvSrc + "  pf = obj.File(" + q + "/etc/passwd" + q + ")" + n
+    harvSrc = harvSrc + "  if pf and pf.has_permission(" + q + "r" + q + ") then" + n
+    harvSrc = harvSrc + "    pc = pf.get_content" + n
+    harvSrc = harvSrc + "    if pc and pc != " + q + q + " then" + n
+    harvSrc = harvSrc + "      for line in pc.split(char(10))" + n
+    harvSrc = harvSrc + "        if line != " + q + q + " then results.push(lanIp + char(1) + " + q + "system" + q + " + char(1) + " + q + "passwd" + q + " + char(1) + line)" + n
+    harvSrc = harvSrc + "      end for" + n
+    harvSrc = harvSrc + "    end if" + n
+    harvSrc = harvSrc + "  end if" + n
     harvSrc = harvSrc + "  obj.touch(" + q + "/home/guest" + q + ", " + q + "system.log" + q + ")" + n
     harvSrc = harvSrc + "  tmp = obj.File(" + q + "/home/guest/system.log" + q + ")" + n
     harvSrc = harvSrc + "  if tmp then" + n
@@ -271,7 +280,12 @@ WeakLib = function()
         if hparts.len < 2 then continue
         pw = CrackHash(hparts[1])
         if pw then
-            print(c.lime + "  " + hparts[0] + c.ennd + c.grey + " : " + c.ennd + c.gold + "<b>" + pw + c.ennd + c.grey + "  [" + bounceIp + "/" + userName + "/" + fileName + "]" + c.ennd)
+            if fileName == "passwd" then
+                // SSH credential
+                print(c.lime + "  " + hparts[0] + c.ennd + c.grey + " : " + c.ennd + c.gold + "<b>" + pw + c.ennd + c.grey + "  [" + bounceIp + " SSH]" + c.ennd)
+            else
+                print(c.lime + "  " + hparts[0] + c.ennd + c.grey + " : " + c.ennd + c.gold + "<b>" + pw + c.ennd + c.grey + "  [" + bounceIp + "/" + userName + "/" + fileName + "]" + c.ennd)
+            end if
             totalCracked = totalCracked + 1
         end if
     end for
@@ -428,6 +442,7 @@ AutoHarvest = function(hops, maxTargets)
                         if typeof(obj) == "shell" then
                             targetShell = obj
                             targetIp = ip
+                            EdbAdd(ml.lib_name, ml.version, mem, val)
                         end if
                     end for
                 end for
