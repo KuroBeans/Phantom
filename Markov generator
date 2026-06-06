@@ -1,22 +1,31 @@
-// pw7.src — Markov rainbow table loader with persistent cache
-// First run: generates passwords, saves to pw7.txt (~30-60s)
-// Every run after: loads from pw7.txt (instant)
+// pw7.src — Markov rainbow table, chunked persistent cache
+// First run: generates up to 85000 passwords, saves as pw7_0.txt, pw7_1.txt...
+// Every run after: loads from chunks instantly
+// Delete pw7_0.txt to force regeneration
 
-MAX_WORDS = 85000 //change me if you want to generate faster
-				 // 2000 for instant 85000 for heavy weight
-CACHE = "/root/ai/tp/pw7.txt"
+MAX_WORDS  = 5000 //change me to generate more passwds. The higher the number,
+				//	the longer it'll take.
+CHUNK_SIZE = 5000
+DIR        = "/root/ai/tp"
+PFX        = "pw7_"
 
 gco = get_custom_object
 if not gco.hasIndex("rt") then gco.rt = {}
-
 comp = get_shell.host_computer
-f = comp.File(CACHE)
 
-if f != null then
-    for w in f.get_content.split(",")
-        if w.len > 0 then gco.rt[md5(w)] = w
-    end for
+if comp.File(DIR + "/" + PFX + "0.txt") != null then
+    // ── LOAD from chunks ──────────────────────────────────
+    i = 0
+    while true
+        cf = comp.File(DIR + "/" + PFX + i + ".txt")
+        if cf == null then break
+        for w in cf.get_content.split(",")
+            if w.len > 0 then gco.rt[md5(w)] = w
+        end for
+        i = i + 1
+    end while
 else
+    // ── GENERATE ─────────────────────────────────────────
     gen = {}
     gen._order = 3
     gen._minLength = 3
@@ -59,25 +68,43 @@ else
 
     gen.Init
 
-    words = gen._seeds.split(",")
-    for w in words
-        gco.rt[md5(w)] = w
+    // Collect words into a list for chunked saving
+    seen = {}
+    words = []
+    for w in gen._seeds.split(",")
+        h = md5(w)
+        if not seen.hasIndex(h) then
+            seen[h] = 1
+            words.push(w)
+            gco.rt[h] = w
+        end if
     end for
 
     stall = 0
-    while stall < 500 and gco.rt.len < MAX_WORDS
+    while stall < 2000 and words.len < MAX_WORDS
         w = gen.Next
         h = md5(w)
-        if not gco.rt.hasIndex(h) then
-            gco.rt[h] = w
+        if not seen.hasIndex(h) then
+            seen[h] = 1
             words.push(w)
+            gco.rt[h] = w
             stall = 0
         else
             stall = stall + 1
         end if
     end while
 
-    comp.touch("/root/ai/tp", "pw7.txt")
-    cf = comp.File(CACHE)
-    if cf != null then cf.set_content(words.join(","))
+    // ── SAVE in chunks ────────────────────────────────────
+    chunk = 0
+    pos = 0
+    while pos < words.len
+        top = pos + CHUNK_SIZE
+        if top > words.len then top = words.len
+        fname = PFX + chunk + ".txt"
+        comp.touch(DIR, fname)
+        cf = comp.File(DIR + "/" + fname)
+        if cf != null then cf.set_content(words[pos:top].join(","))
+        chunk = chunk + 1
+        pos = top
+    end while
 end if
