@@ -37,7 +37,7 @@ Title = function()
     print(b+"<b>  ██████╔╝███████║███████║██╔██╗██║   ██║   ██║   ██║██╔████╔██║"+c.ennd)
     print(b+"<b>  ██╔═══╝ ██╔══██║██╔══██║██║╚████║   ██║   ██║   ██║██║╚██╔╝██║"+c.ennd)
     print(a+"<b>  ██║     ██║  ██║██║  ██║██║ ╚███║   ██║   ╚██████╔╝██║ ╚═╝ ██║"+c.ennd)
-    print(a+"<b>  ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚══╝  ╚═╝    ╚═════╝ ╚═╝     ╚═╝"+c.ennd)
+    print(a+"<b>  ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚══╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝"+c.ennd)
     print(c.grey+"                                              v1.2  by operator"+c.ennd)
     print(char(10))
 end function
@@ -314,7 +314,7 @@ Scan = function(ip, port, comp, inject, libName)
         for res in results
             if res == results[0] then continue
             val = res[res.indexOf("<b>") + 3 : res.indexOf("</b>")]
-            print(char(10) + c.orange + "<b>" + mem + "  " + val + c.ennd)
+            print(char(10) + c.orange + "<b>" + mem + " " + val + c.ennd)
             if inject then
                 obj = metalib.overflow(mem, val, inject)
             else
