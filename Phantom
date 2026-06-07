@@ -37,7 +37,7 @@ Title = function()
     print(b+"<b>  ██████╔╝███████║███████║██╔██╗██║   ██║   ██║   ██║██╔████╔██║"+c.ennd)
     print(b+"<b>  ██╔═══╝ ██╔══██║██╔══██║██║╚████║   ██║   ██║   ██║██║╚██╔╝██║"+c.ennd)
     print(a+"<b>  ██║     ██║  ██║██║  ██║██║ ╚███║   ██║   ╚██████╔╝██║ ╚═╝ ██║"+c.ennd)
-    print(a+"<b>  ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚══╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝"+c.ennd)
+    print(a+"<b>  ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚══╝  ╚═╝    ╚═════╝ ╚═╝     ╚═╝"+c.ennd)
     print(c.grey+"                                              v1.2  by operator"+c.ennd)
     print(char(10))
 end function
@@ -98,7 +98,10 @@ RandIp = function()
     b = floor(rnd * 256)
     d = floor(rnd * 256)
     e = floor(rnd * 256)
-    print(a + "." + b + "." + d + "." + e)
+    ip = a + "." + b + "." + d + "." + e
+    print(ip)
+    globals.pipeResult = ip
+    globals.pipeVars["p"] = ip
 end function
 
 // ── Nmap ─────────────────────────────────────────────────────────
@@ -268,21 +271,21 @@ Scan = function(ip, port, comp, inject, libName)
                     obj = metalib.overflow(mem, val)
                 end if
                 if typeof(obj) == "shell" then
-                    print(char(10) + c.orange + "<b>" + mem + " " + val + c.ennd)
+                    print(char(10) + c.orange + "<b>" + mem + "  " + val + c.ennd)
                     print("<b>shell   : " + c.yellow + obj + c.ennd)
                     shells = shells + 1
                     gotResult = true
                     GETPERMS(obj)
                 end if
                 if typeof(obj) == "computer" then
-                    print(char(10) + c.orange + "<b>" + mem + " " + val + c.ennd)
+                    print(char(10) + c.orange + "<b>" + mem + "  " + val + c.ennd)
                     print("<b>computer: " + c.yellow + obj + c.ennd)
                     comps = comps + 1
                     gotResult = true
                     GETPERMS(obj)
                 end if
                 if typeof(obj) == "file" then
-                    print(char(10) + c.orange + "<b>" + mem + " " + val + c.ennd)
+                    print(char(10) + c.orange + "<b>" + mem + "  " + val + c.ennd)
                     print("<b>file    : " + c.yellow + obj.name + c.ennd)
                     files = files + 1
                     gotResult = true
@@ -387,12 +390,12 @@ Grab = function(ip, port, mem, val, inject)
 
     // if no mem/val provided, check db.txt directly
     if not mem or mem == "" then
+        dbMatches = []
         dbFile = myComp.File(currentPath + "/db.txt")
         if dbFile and typeof(dbFile) == "file" then
             dbContent = dbFile.get_content
             if dbContent and dbContent != "" then
                 for line in dbContent.split(char(10))
-                    if mem then break
                     if line == "" then continue
                     line = line.replace(char(13), "")
                     p1 = line.indexOf("|")
@@ -402,23 +405,63 @@ Grab = function(ip, port, mem, val, inject)
                     p3 = line.indexOf("|", p2 + 1)
                     if p3 != null then
                         if line[:p1] == metalib.lib_name and line[p1+1:p2] == metalib.version then
-                            mem = line[p2+1:p3]
-                            val = line[p3+1:]
+                            entry = {}
+                            entry.mem = line[p2+1:p3]
+                            entry.val = line[p3+1:]
+                            dbMatches.push(entry)
                         end if
                     else
                         if line[:p1] == metalib.lib_name then
-                            mem = line[p1+1:p2]
-                            val = line[p2+1:]
+                            entry = {}
+                            entry.mem = line[p1+1:p2]
+                            entry.val = line[p2+1:]
+                            dbMatches.push(entry)
                         end if
                     end if
                 end for
             end if
         end if
-        if not mem or mem == "" then
-            print(c.yellow + "<b>grab: no mem/val and no db.txt entry for " + metalib.lib_name + c.ennd)
+
+        // try each db entry until one yields a usable object
+        if dbMatches.len > 0 then
+            print(c.grey + "  db: " + dbMatches.len + " stored exploit(s) for " + metalib.lib_name + " " + metalib.version + c.ennd)
+        else
+            print(c.grey + "  db: no stored exploits for " + metalib.lib_name + " " + metalib.version + c.ennd)
+        end if
+        for e in dbMatches
+            if inject then
+                res = metalib.overflow(e.mem, e.val, inject)
+            else
+                res = metalib.overflow(e.mem, e.val)
+            end if
+            if typeof(res) == "shell" or typeof(res) == "computer" or typeof(res) == "file" then
+                globals.object = res
+                mem = e.mem
+                val = e.val
+                break
+            else
+                print(c.grey + "    " + e.mem + " " + e.val + " → " + typeof(res) + c.ennd)
+            end if
+        end for
+
+        if mem and mem != "" then
+            print(c.green + "  db: using " + metalib.lib_name + "  " + mem + "  " + val + c.ennd)
+            globals.remotePath = "/"
+            if typeof(globals.object) == "shell" or typeof(globals.object) == "computer" then
+                print(c.cyan + "<b>object obtained" + c.ennd)
+                GETPERMS(globals.object)
+            else if typeof(globals.object) == "file" then
+                print(c.cyan + "<b>file obtained: " + globals.object.name + c.ennd)
+            end if
             return
         end if
-        print(c.green + "  db: using " + metalib.lib_name + "  " + mem + "  " + val + c.ennd)
+
+        if not mem or mem == "" then
+            print(c.yellow + "<b>grab: no working db entry for " + metalib.lib_name + " " + metalib.version + c.ennd)
+            print(c.grey + "  run scan first to populate exploits, or pass mem/val: grab " + ip + " " + port + " [mem] [val]" + c.ennd)
+            return
+        end if
+        print(c.green + "  using " + metalib.lib_name + "  " + mem + "  " + val + c.ennd)
     end if
 
     if inject then
@@ -713,8 +756,21 @@ Scp = function(flag, orig, dest)
         print(c.yellow + "<b>scp: missing destination path" + c.ennd)
         return
     end if
-    if flag == "-u" then myShell.scp(orig, dest, object)
-    if flag == "-d" then object.scp(orig, dest, myShell)
+    if flag == "-u" then
+        result = myShell.scp(orig, dest, object)
+        if result then print(c.yellow + "<b>scp: " + result + c.ennd)
+    else if flag == "-d" then
+        fname = orig.split("/")[-1]
+        if dest[-1:] == "/" then dest = dest[:-1]
+        result = object.scp(orig, dest, myShell)
+        if result then
+            print(c.yellow + "<b>scp: " + result + c.ennd)
+        else
+            print(c.green + "  " + fname + " → " + dest + "/" + fname + c.ennd)
+        end if
+    else
+        print(c.yellow + "<b>scp: unknown flag " + flag + "  (use -u or -d)" + c.ennd)
+    end if
 end function
 
 // ── Set Target ───────────────────────────────────────────────────
@@ -1198,7 +1254,8 @@ ShowHelp = function(flag)
         print(c.yellow+"<b>enum</b>"+c.ennd+"       enum [-l] [-r]  (full filesystem dump)")
         print(c.yellow+"<b>harvest</b>"+c.ennd+"    harvest  (crack Mail.txt + Bank.txt)")
         print(c.yellow+"<b>wifi</b>"+c.ennd+"       wifi  (scan + crack nearby WiFi networks)")
-        print(c.yellow+"<b>wstack</b>"+c.ennd+"     wstack  (bounce whole LAN, push all computers to stack)")
+        print(c.yellow+"<b>siphon</b>"+c.ennd+"     siphon [opt:-a/-b/-m/-p/-l/-n]  (network-wide harvest)")
+        print(c.yellow+"<b>wstack</b>"+c.ennd+"     wstack [opt:-l]  (bounce LAN, push computers to stack)")
         print(c.yellow+"<b>pwnlan</b>"+c.ennd+"     pwnlan  (exploit all LAN devices)")
         print(c.yellow+"<b>netmap</b>"+c.ennd+"     netmap  (LAN recon, no attacking)")
         print(c.yellow+"<b>hacklan</b>"+c.ennd+"    hacklan [lan-ip]  (bounce to LAN device)")
@@ -1238,6 +1295,8 @@ ShowHelp = function(flag)
         print(c.grey + "  grab pt 0 [m] [v]   → get router shell" + c.ennd)
         print(c.grey + "  autoroot            → escalate to root" + c.ennd)
         print(c.grey + "  weaklib             → harvest whole LAN" + c.ennd)
+        print(c.grey + "  upgrade             → check local lib updates (upgrade -u to install)" + c.ennd)
+        print(c.grey + "  updatelib           → scan target /lib, update edb" + c.ennd)
         print(c.grey + "  scan pt 0 [lanip] -lib libhttp.so  → bounce to LAN device" + c.ennd)
         print(c.grey + "  jump --rshell       → set up rshell server on target" + c.ennd)
         print(c.grey + "  push/pop/stack/swap → juggle multiple objects" + c.ennd)
@@ -1580,11 +1639,24 @@ Propagate = function(rshellMode)
     parts = srcFolder.split("/")
     folderName = parts[parts.len - 1]
     remoteBin = dst + "/" + folderName + "/phantom"
+    remoteFolder = dst + "/" + folderName
 
     binFile = rcomp.File(remoteBin)
     if not binFile then
         print(c.yellow + "<b>propagate: phantom not found at " + remoteBin + c.ennd)
         return
+    end if
+
+    // ensure metaxploit.so sits alongside the deployed phantom
+    mxThere = rcomp.File(remoteFolder + "/metaxploit.so")
+    if not mxThere then
+        print(c.orange + "Uploading metaxploit.so to deployed folder..." + c.ennd)
+        me.scp(currentPath + "/metaxploit.so", remoteFolder, comp)
+    end if
+    // also try /lib as a fallback location
+    mxLib = rcomp.File("/lib/metaxploit.so")
+    if not mxLib then
+        me.scp(currentPath + "/metaxploit.so", "/lib", comp)
     end if
 
     if rshellMode then
@@ -1785,6 +1857,159 @@ LocalScan = function()
     print(char(10) + c.cyan + "lscan complete — shells:" + shells + "  files:" + files + "  computers:" + comps + c.ennd)
 end function
 
+
+
+// ── Upgrade ───────────────────────────────────────────────────────
+// Uses aptclient to check and upgrade phantom's local lib dependencies
+// check_upgrade(path) → 0=ok, 1=needs update, string=error
+// install(pkg, path)  → "" on success, error string on failure
+Upgrade = function(checkOnly)
+    apt = include_lib("/lib/aptclient.so")
+    if not apt then
+        print(c.yellow + "<b>upgrade: aptclient.so not found in /lib" + c.ennd)
+        return
+    end if
+
+    // [full_path, package_name, install_dir]
+    targets = [
+        ["/lib/metaxploit.so",   "metaxploit.so",    "/lib"],
+        ["/lib/librshell.so",    "librshell.so",     "/lib"],
+        ["/lib/crypto.so",       "crypto.so",        "/lib"],
+        ["/bin/rshell_interface","rshell_interface",  "/bin"]]
+
+    needsUpdate = []
+    for t in targets
+        if not myComp.File(t[0]) then continue
+        result = apt.check_upgrade(t[0])
+        if result == 0 then
+            print(c.grey + "  " + t[0] + "  ok" + c.ennd)
+        else if result == 1 then
+            print(c.gold + "  " + t[0] + "  update available" + c.ennd)
+            needsUpdate.push(t)
+        else
+            print(c.yellow + "  " + t[0] + "  " + result + c.ennd)
+        end if
+    end for
+
+    if needsUpdate.len == 0 then
+        print(c.cyan + "All libs up to date" + c.ennd)
+        return
+    end if
+
+    if checkOnly then
+        print(c.cyan + needsUpdate.len + " update(s) available — run upgrade -u to install" + c.ennd)
+        return
+    end if
+
+    print(c.orange + "Installing updates..." + c.ennd)
+    updated = 0
+    for t in needsUpdate
+        result = apt.install(t[1], t[2])
+        if result == "" or result == null then
+            print(c.lime + "  [+] " + t[0] + c.ennd)
+            updated = updated + 1
+        else
+            print(c.yellow + "  failed: " + t[0] + "  " + result + c.ennd)
+        end if
+    end for
+    print(c.cyan + "upgrade complete — " + updated + "/" + needsUpdate.len + " updated" + c.ennd)
+end function
+
+// ── UpdateLib ─────────────────────────────────────────────────────
+// Scans target's /lib, finds exploitable libs, updates gco.edb
+UpdateLib = function()
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>updatelib: need remote shell" + c.ennd)
+        return
+    end if
+    rcomp = object.host_computer
+    print(c.orange + "Uploading scanner to target..." + c.ennd)
+    me = get_shell
+    me.scp(currentPath + "/metaxploit.so", "/home/guest", object)
+
+    q = char(34)
+    n = char(10)
+    rcomp.touch("/home/guest", "ulb.src")
+    sf = rcomp.File("/home/guest/ulb.src")
+    if not sf then
+        print(c.yellow + "<b>updatelib: could not write script" + c.ennd)
+        return
+    end if
+
+    src = "selfPath = program_path.split(char(47))[:-1].join(char(47))" + n
+    src = src + "metaxploit = include_lib(selfPath + char(47) + " + q + "metaxploit.so" + q + ")" + n
+    src = src + "if not metaxploit then metaxploit = include_lib(" + q + "/lib/metaxploit.so" + q + ")" + n
+    src = src + "if not metaxploit then exit(" + q + "no meta" + q + ")" + n
+    src = src + "gco = get_custom_object" + n
+    src = src + "results = []" + n
+    src = src + "folder = host_computer.File(" + q + "/lib" + q + ")" + n
+    src = src + "if not folder then exit()" + n
+    src = src + "for lib in folder.get_files" + n
+    src = src + "  if not lib.is_binary then continue" + n
+    src = src + "  ml = metaxploit.load(" + q + "/lib/" + q + " + lib.name)" + n
+    src = src + "  if not ml then continue" + n
+    src = src + "  mems = metaxploit.scan(ml)" + n
+    src = src + "  if not mems then continue" + n
+    src = src + "  for mem in mems" + n
+    src = src + "    items = metaxploit.scan_address(ml, mem).split(" + q + "Unsafe check: " + q + ")" + n
+    src = src + "    if not items then continue" + n
+    src = src + "    for item in items" + n
+    src = src + "      if item == items[0] then continue" + n
+    src = src + "      p1 = item.indexOf(" + q + "<b>" + q + ")" + n
+    src = src + "      p2 = item.indexOf(" + q + "</b>" + q + ")" + n
+    src = src + "      if p1 == null or p2 == null then continue" + n
+    src = src + "      val = item[p1+3:p2]" + n
+    src = src + "      if val and val != " + q + q + " then results.push(ml.lib_name + char(1) + ml.version + char(1) + mem + char(1) + val)" + n
+    src = src + "    end for" + n
+    src = src + "  end for" + n
+    src = src + "end for" + n
+    src = src + "gco.ulbResults = results.join(char(10))" + n
+    src = src + "gco.ulbCount = results.len" + n
+
+    sf.set_content(src)
+    print(c.orange + "Building on target..." + c.ennd)
+    object.build("/home/guest/ulb.src", "/home/guest", false)
+    bf = rcomp.File("/home/guest/ulb")
+    if not bf then
+        print(c.yellow + "<b>updatelib: build failed" + c.ennd)
+        sf.delete
+        mxf = rcomp.File("/home/guest/metaxploit.so")
+        if mxf then mxf.delete
+        return
+    end if
+
+    gco.ulbResults = null
+    gco.ulbCount = 0
+    print(c.orange + "Scanning libs on target..." + c.ennd)
+    object.launch("/home/guest/ulb")
+
+    sf.delete
+    bf.delete
+    mxf = rcomp.File("/home/guest/metaxploit.so")
+    if mxf then mxf.delete
+
+    if not gco.ulbResults or gco.ulbCount == 0 then
+        print(c.yellow + "<b>updatelib: no exploitable libs found" + c.ennd)
+        return
+    end if
+
+    added = 0
+    for line in gco.ulbResults.split(char(10))
+        if line == "" then continue
+        parts = line.split(char(1))
+        if parts.len < 4 then continue
+        prev = globals.edb.len
+        EdbAdd(parts[0], parts[1], parts[2], parts[3])
+        if globals.edb.len > prev then
+            added = added + 1
+            print(c.lime + "  [+] " + parts[0] + " v" + parts[1] + "  " + parts[2] + " / " + parts[3] + c.ennd)
+        end if
+    end for
+
+    div
+    print(c.cyan + "updatelib: " + added + " new exploit(s) added to edb  (" + globals.edb.len + " total)" + c.ennd)
+end function
+
 // ── ScanRemoteLib ─────────────────────────────────────────────────
 // loads a lib FROM the remote router and scans with bounce to LAN IP
 // safe — never loads insecure libs on your own machine
@@ -1800,7 +2025,13 @@ ScanRemoteLib = function(ip, port, bounceIp, libName, mem, val)
     // upload our metaxploit to router
     print(c.orange + "Jumping metaxploit to router..." + c.ennd)
     me = get_shell
-    me.scp(currentPath + "/metaxploit.so", "/home/guest", object)
+    upDir = "/lib"
+    mxResult = me.scp(currentPath + "/metaxploit.so", "/lib", object)
+    if mxResult then
+        // /lib not writable — fall back to /home/guest
+        upDir = "/home/guest"
+        me.scp(currentPath + "/metaxploit.so", "/home/guest", object)
+    end if
 
     // write scanner src to router
     rcomp.touch("/home/guest", "slx.src")
@@ -1815,6 +2046,8 @@ ScanRemoteLib = function(ip, port, bounceIp, libName, mem, val)
     src = "gco = get_custom_object" + n
     src = src + "selfPath = program_path.split(char(47))[:-1].join(char(47))" + n
     src = src + "metaxploit = include_lib(selfPath + char(47) + " + q + "metaxploit.so" + q + ")" + n
+    src = src + "if not metaxploit then metaxploit = include_lib(" + q + "/lib/metaxploit.so" + q + ")" + n
+    src = src + "if not metaxploit then metaxploit = include_lib(" + q + "/home/guest/metaxploit.so" + q + ")" + n
     src = src + "if not metaxploit then exit(" + q + "no metaxploit" + q + ")" + n
     src = src + "ml = metaxploit.load(" + q + "/lib/" + q + " + gco.slxLib)" + n
     src = src + "if not ml then exit(" + q + "lib not found" + q + ")" + n
@@ -1848,7 +2081,7 @@ ScanRemoteLib = function(ip, port, bounceIp, libName, mem, val)
     // cleanup
     srcFile.delete
     binFile.delete
-    mxf = rcomp.File("/home/guest/metaxploit.so")
+    mxf = rcomp.File(upDir + "/metaxploit.so")
     if mxf then mxf.delete
 
     if not gco.slxType or gco.slxType == "null" then
@@ -1881,9 +2114,9 @@ gco.crypto = include_lib("/lib/crypto.so")
 if not gco.crypto then gco.crypto = include_lib(currentPath + "/crypto.so")
 if not gco.crypto then exit(c.yellow + "<b>phantom: crypto.so missing" + c.ennd)
 
-import_code("/root/ai/tp/core.src")
-import_code("/root/ai/tp/recon.src")
-import_code("/root/ai/tp/hack.src")
+import_code("/root/ai/pt/core.src")
+import_code("/root/ai/pt/recon.src")
+import_code("/root/ai/pt/hack.src")
 
 myShell      = get_shell
 myComp       = myShell.host_computer
@@ -1958,34 +2191,75 @@ end if
 Title
 print(c.grey + "type " + c.white + "<b>help</b>" + c.grey + " for commands.  ./ launches local binary.  r./ launches remote." + c.ennd + char(10))
 
+pipeQueue = []
+pipeResult = ""
+pipeVars = {}
+
 while true
 
-    print(char(10))
-    if publicTarget != "" then print(c.gold  + "public  target: " + publicTarget + c.ennd)
-    if localTarget  != "" then print(c.gold  + "local   target: " + localTarget  + c.ennd)
-    if bounceTarget != "" then print(c.gold  + "bounce  target: " + bounceTarget + c.ennd)
-    if lObject and typeof(lObject) == "shell" then
-        myShell = lObject
-        myComp  = lObject.host_computer
-        print(c.white + "<b>local shell: " + lObject.host_computer.get_name + c.ennd)
-    end if
-    if lObject and typeof(lObject) == "computer" then
-        myComp = lObject
-        print(c.white + "<b>local computer: " + lObject.get_name + c.ennd)
-    end if
-    if object and typeof(object) == "shell" then
-        print(c.orange + "<b>remote shell: " + c.yellow + object.host_computer.get_name + "  pub:" + object.host_computer.public_ip + "  lan:" + object.host_computer.local_ip + c.ennd)
-        print(c.orange + "remote path: " + c.yellow + remotePath + c.ennd)
-    end if
-    if object and typeof(object) == "computer" then
-        print(c.orange + "<b>remote computer: " + c.yellow + object.get_name + "  pub:" + object.public_ip + "  lan:" + object.local_ip + c.ennd)
-    end if
-    if object and typeof(object) == "file" then
-        print(c.orange + "<b>remote file: " + c.yellow + object.name + c.ennd)
+    if pipeQueue.len > 0 then
+        tokens = pipeQueue[0].split(" ")
+        i = 0
+        while i < tokens.len
+            if tokens[i].len > 1 and tokens[i][0:1] == "@" then
+                vn = tokens[i][1:]
+                if pipeVars.hasIndex(vn) then tokens[i] = pipeVars[vn]
+            end if
+            i = i + 1
+        end while
+        inp = tokens
+        pipeQueue = pipeQueue[1:]
+    else
+        print(char(10))
+        if publicTarget != "" then print(c.gold  + "public  target: " + publicTarget + c.ennd)
+        if localTarget  != "" then print(c.gold  + "local   target: " + localTarget  + c.ennd)
+        if bounceTarget != "" then print(c.gold  + "bounce  target: " + bounceTarget + c.ennd)
+        if lObject and typeof(lObject) == "shell" then
+            myShell = lObject
+            myComp  = lObject.host_computer
+            print(c.white + "<b>local shell: " + lObject.host_computer.get_name + c.ennd)
+        end if
+        if lObject and typeof(lObject) == "computer" then
+            myComp = lObject
+            print(c.white + "<b>local computer: " + lObject.get_name + c.ennd)
+        end if
+        if object and typeof(object) == "shell" then
+            print(c.orange + "<b>remote shell: " + c.yellow + object.host_computer.get_name + "  pub:" + object.host_computer.public_ip + "  lan:" + object.host_computer.local_ip + c.ennd)
+            print(c.orange + "remote path: " + c.yellow + remotePath + c.ennd)
+        end if
+        if object and typeof(object) == "computer" then
+            print(c.orange + "<b>remote computer: " + c.yellow + object.get_name + "  pub:" + object.public_ip + "  lan:" + object.local_ip + c.ennd)
+        end if
+        if object and typeof(object) == "file" then
+            print(c.orange + "<b>remote file: " + c.yellow + object.name + c.ennd)
+        end if
+
+        inp = user_input(c.cyan + "<b>" + active_user + c.ennd + c.grey + "@" + c.ennd + c.gold + myPath + c.ennd + c.white + " $ </b>" + c.ennd, false, false, true).split(" ")
+        pipeIdx = inp.indexOf("|")
+        if pipeIdx != null then
+            pipeQueue.push(inp[pipeIdx+1:].join(" "))
+            inp = inp[:pipeIdx]
+        end if
     end if
 
-    inp = user_input(c.cyan + "<b>" + active_user + c.ennd + c.grey + "@" + c.ennd + c.gold + myPath + c.ennd + c.white + " $ </b>" + c.ennd, false, false, true).split(" ")
     if inp.len == 0 or inp[0] == "" then continue
+
+    // substitute @varname tokens; detect trailing @varname as store target
+    storeVar = null
+    i = 0
+    while i < inp.len
+        if inp[i].len > 1 and inp[i][0:1] == "@" then
+            vn = inp[i][1:]
+            if pipeVars.hasIndex(vn) then
+                inp[i] = pipeVars[vn]
+            else if i == inp.len - 1 then
+                storeVar = vn
+                inp = inp[:-1]
+            end if
+        end if
+        i = i + 1
+    end while
+    if inp.len == 0 then continue
 
     cmd = inp[0]
 
@@ -2545,15 +2819,18 @@ while true
         if objectStack.len == 0 then
             print(c.yellow + "<b>pop: stack is empty" + c.ennd)
         else
-            globals.object = objectStack.pop
+            globals.object = objectStack[-1]
             globals.remotePath = "/"
-            print(c.green + "popped object from stack  [" + objectStack.len + " remaining]" + c.ennd)
+            print(c.green + "popped object from stack  [" + objectStack.len + " in stack]" + c.ennd)
             GETPERMS(globals.object)
         end if
 
     // ── stack ─────────────────────────────────────────────────────
     else if cmd == "stack" then
-        if objectStack.len == 0 then
+        if inp.len >= 2 and inp[1] == "-c" then
+            objectStack = []
+            print(c.grey + "stack cleared" + c.ennd)
+        else if objectStack.len == 0 then
             print(c.grey + "stack is empty" + c.ennd)
         else
             print(c.cyan + "<b>" + objectStack.len + " object(s) in stack:" + c.ennd)
@@ -2660,11 +2937,37 @@ while true
 
     // ── wstack ───────────────────────────────────────────────────
     else if cmd == "wstack" then
-        WStack
+        if inp.len == 2 and inp[1] == "-l" then
+            WStack(true)
+        else
+            WStack(false)
+        end if
+
+    // ── siphon ───────────────────────────────────────────────────
+    else if cmd == "siphon" then
+        if inp.len == 2 then
+            Siphon(inp[1])
+        else
+            Siphon(null)
+        end if
 
     // ── weaklib ──────────────────────────────────────────────────
+    else if cmd == "upgrade" then
+        if inp.len >= 2 and inp[1] == "-u" then
+            Upgrade(false)
+        else
+            Upgrade(true)
+        end if
+
+    else if cmd == "updatelib" then
+        UpdateLib()
+
     else if cmd == "weaklib" then
-        WeakLib
+        if inp.len == 2 and inp[1] == "-l" then
+            WeakLib(true)
+        else
+            WeakLib(false)
+        end if
 
     // ── pwnlan ───────────────────────────────────────────────────
     else if cmd == "pwnlan" then
@@ -2722,6 +3025,11 @@ while true
     // ── unknown ──────────────────────────────────────────────────
     else
         print(c.yellow + "<b>phantom: " + cmd + ": command not found" + c.ennd)
+    end if
+
+    if storeVar != null and pipeResult != "" then
+        pipeVars[storeVar] = pipeResult
+        pipeResult = ""
     end if
 
 end while
