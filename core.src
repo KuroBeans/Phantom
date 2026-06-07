@@ -135,7 +135,9 @@ RShell = function(args)
             print(c.yellow + "<b>rshell: could not write script to server" + c.ennd)
             return
         end if
-        src = "metaxploit = include_lib(" + q + "/lib/metaxploit.so" + q + ")" + n
+        src = "selfPath = program_path.split(char(47))[:-1].join(char(47))" + n
+        src = src + "metaxploit = include_lib(selfPath + char(47) + " + q + "metaxploit.so" + q + ")" + n
+        src = src + "if not metaxploit then metaxploit = include_lib(" + q + "/lib/metaxploit.so" + q + ")" + n
         src = src + "if not metaxploit then exit(" + q + "no metaxploit" + q + ")" + n
         src = src + "gco = get_custom_object" + n
         src = src + "shells = []" + n
@@ -269,7 +271,9 @@ RShell = function(args)
             print(c.yellow + "<b>rshell infect: could not write script" + c.ennd)
             return
         end if
-        src = "metaxploit = include_lib(" + q + "/lib/metaxploit.so" + q + ")" + n
+        src = "selfPath = program_path.split(char(47))[:-1].join(char(47))" + n
+        src = src + "metaxploit = include_lib(selfPath + char(47) + " + q + "metaxploit.so" + q + ")" + n
+        src = src + "if not metaxploit then metaxploit = include_lib(" + q + "/lib/metaxploit.so" + q + ")" + n
         src = src + "if not metaxploit then exit(" + q + "no metaxploit" + q + ")" + n
         src = src + "metaxploit.rshell_client(" + q + serverIp + q + ", " + port + ", " + q + procName + q + ")" + n
         sf.set_content(src)
@@ -603,7 +607,12 @@ EdbSave = function()
         f = comp.File(savePath + "/db.txt")
     end if
     if f and typeof(f) == "file" then
-        f.set_content(out)
+        wr = f.set_content(out)
+        if wr != null and wr != "" then
+            print(c.yellow + "edb: save error: " + wr + c.ennd)
+        end if
+    else
+        print(c.yellow + "edb: could not open " + savePath + "/db.txt for writing" + c.ennd)
     end if
 end function
 
@@ -612,7 +621,9 @@ EdbAdd = function(libName, libVer, memAddr, valStr)
     if not libName or libName == "" or not memAddr or memAddr == "" or not valStr or valStr == "" then return
     if globals.edb == null then globals.edb = []
     for ex in globals.edb
-        if ex["lib"] == libName and ex["mem"] == memAddr and ex["val"] == valStr then return
+        exVer = ""
+        if ex.hasIndex("ver") then exVer = ex["ver"]
+        if ex["lib"] == libName and exVer == libVer and ex["mem"] == memAddr and ex["val"] == valStr then return
     end for
     entry = {}
     entry["lib"] = libName
