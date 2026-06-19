@@ -1,0 +1,606 @@
+//////////////////////////////////////////////////////////////
+//////////////////// Romote.src /////////////////////////////
+////////////////////////////////////////////////////////////
+
+c = {}
+c.red    = "<color=#CC2222>"       // crimson
+c.orange = "<color=#D4621A>"       // burnt sienna
+c.yellow = "<color=#D4A017>"       // ochre
+c.green  = "<color=#4A7C59>"       // sage green
+c.cyan   = "<color=#2E86AB>"       // cerulean
+c.blue   = "<color=#1B3A8C>"       // cobalt blue
+c.purple = "<color=#4B0082>"       // indigo
+c.white  = "<color=#FFFFF0>"       // ivory
+c.grey   = "<color=#708090>"       // slate grey
+c.gold   = "<color=#FFB300>"       // amber
+c.lime   = "<color=#4CBB17>"       // viridian green
+c.pink   = "<color=#FF4081>"       // magenta
+c.teal   = "<color=#008080>"       // teal
+c.rust   = "<color=#B7410E>"       // rust
+c.copper = "<color=#B87333>"       // copper
+c.ennd   = "</color>"
+
+// ── Utility ──────────────────────────────────────────────────────
+div = function()
+    print(c.grey + "----------------------------------------------------------------" + c.ennd)
+end function
+Title = function()
+    clear_screen
+    r = [c.cyan, c.lime, c.pink, c.gold, c.purple, c.copper, c.teal, c.rust]
+    r.shuffle
+    a = r[0]
+    b = r[1]
+    print(char(10))
+    print(a+"<b>  ██████╗ ██╗  ██╗ █████╗ ███╗  ██╗████████╗ ██████╗ ███╗  ███╗"+c.ennd)
+    print(a+"<b>  ██╔══██╗██║  ██║██╔══██╗████╗ ██║╚══██╔══╝██╔═══██╗████╗████║"+c.ennd)
+    print(b+"<b>  ██████╔╝███████║███████║██╔██╗██║   ██║   ██║   ██║██╔████╔██║"+c.ennd)
+    print(b+"<b>  ██╔═══╝ ██╔══██║██╔══██║██║╚████║   ██║   ██║   ██║██║╚██╔╝██║"+c.ennd)
+    print(a+"<b>  ██║     ██║  ██║██║  ██║██║ ╚███║   ██║   ╚██████╔╝██║ ╚═╝ ██║"+c.ennd)
+    print(a+"<b>  ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚══╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝"+c.ennd)
+    print(c.grey+"                                              v1.2  by operator"+c.ennd)
+    print(char(10))
+end function
+
+GetFile = function(input, obj, local)
+    if typeof(obj) == "shell" then obj = obj.host_computer
+    if input == "" then return null
+    if input[0] == "/" then return obj.File(input)
+    if local then
+        if myPath == "/" then return obj.File("/" + input)
+        return obj.File(myPath + "/" + input)
+    end if
+    if remotePath == "/" then return obj.File("/" + input)
+    return obj.File(remotePath + "/" + input)
+end function
+
+MemDump = function(fileObj)
+    if typeof(fileObj) != "file" then return null
+    result = []
+    queue = fileObj.get_folders + fileObj.get_files
+    while queue.len > 0
+        f = queue.pull
+        if f.is_folder then queue = queue + f.get_folders + f.get_files
+        result.push(f)
+    end while
+    return result
+end function
+
+GETPERMS = function(obj)
+    if typeof(obj) != "shell" and typeof(obj) != "computer" then
+        print(c.yellow + "<b>getperms: not a shell or computer object" + c.ennd)
+        return
+    end if
+    if typeof(obj) == "shell" then rhost = obj.host_computer
+    if typeof(obj) == "computer" then rhost = obj
+    targets = ["/var/system.log", "/etc/passwd", "/home/guest", "/var", "/etc"]
+    writes = ""
+    reads = ""
+    ok   = c.green + "<b>yes</b>" + c.ennd
+    deny = c.red   + "<b>no</b>"  + c.ennd
+    for path in targets
+        f = rhost.File(path)
+        if not f then continue
+        w = deny
+        r = deny
+        if f.has_permission("w") then w = ok
+        if f.has_permission("r") then r = ok
+        writes = writes + c.white + "<b>" + path + "</b>" + c.ennd + "  w:" + w + char(10)
+        reads  = reads  + c.white + "<b>" + path + "</b>" + c.ennd + "  r:" + r + char(10)
+    end for
+    print(c.yellow + "<b>write permissions" + char(10) + format_columns(writes))
+    print(c.yellow + "<b>read permissions"  + char(10) + format_columns(reads))
+end function
+
+Propagate = function(rshellMode)
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>propagate: not holding remote shell" + c.ennd)
+        return
+    end if
+    comp = object
+    rcomp = object.host_computer
+    me = get_shell
+
+    dst = null
+    for path in ["/home/guest", "/tmp", "/root"]
+        f = rcomp.File(path)
+        if f and f.has_permission("w") then
+            dst = path
+            break
+        end if
+    end for
+    if not dst then
+        print(c.yellow + "<b>propagate: no writable destination on target" + c.ennd)
+        return
+    end if
+
+    if rshellMode then
+        // use lean rsh folder
+        srcFolder = "/root/ai/rsh"
+        rshDir = myComp.File(srcFolder)
+        if not rshDir then srcFolder = currentPath
+    else
+        srcFolder = currentPath
+    end if
+
+    print(c.orange + "Copying " + srcFolder + " to " + dst + " on target..." + c.ennd)
+    result = me.scp(srcFolder, dst, comp)
+    if result and result != 1 then
+        print(c.yellow + "<b>propagate: scp error: " + result + c.ennd)
+        return
+    end if
+
+    parts = srcFolder.split("/")
+    folderName = parts[parts.len - 1]
+    remoteBin = dst + "/" + folderName + "/phantom"
+    remoteFolder = dst + "/" + folderName
+
+    binFile = rcomp.File(remoteBin)
+    if not binFile then
+        print(c.yellow + "<b>propagate: phantom not found at " + remoteBin + c.ennd)
+        return
+    end if
+
+    // ensure metaxploit.so sits alongside the deployed phantom
+    mxThere = rcomp.File(remoteFolder + "/metaxploit.so")
+    if not mxThere then
+        print(c.orange + "Uploading metaxploit.so to deployed folder..." + c.ennd)
+        me.scp(currentPath + "/metaxploit.so", remoteFolder, comp)
+    end if
+    // also try /lib as a fallback location
+    mxLib = rcomp.File("/lib/metaxploit.so")
+    if not mxLib then
+        me.scp(currentPath + "/metaxploit.so", "/lib", comp)
+    end if
+
+    // ensure librshell.so is in /lib on target (needed for rshelld)
+    lrLib = rcomp.File("/lib/librshell.so")
+    if not lrLib then
+        print(c.orange + "Uploading librshell.so to target /lib..." + c.ennd)
+        me.scp(currentPath + "/librshell.so", "/lib", comp)
+    end if
+    // ensure crypto.so is alongside phantom
+    crThere = rcomp.File(remoteFolder + "/crypto.so")
+    if not crThere then
+        cr = myComp.File(currentPath + "/crypto.so")
+        if cr then me.scp(currentPath + "/crypto.so", remoteFolder, comp)
+    end if
+
+    if rshellMode then
+        print(c.cyan + "Launching phantom --rshell on target..." + c.ennd)
+        comp.launch(remoteBin, "--rshell 1222")
+        gco.rshellServer = rcomp.public_ip
+        gco.rshellPort   = 1222
+        myPubIp = get_router.public_ip
+        if gco.rshellServer == myPubIp then
+            print(c.yellow + "<b>propagate: that's your own machine!" + c.ennd)
+            gco.rshellServer = null
+            return
+        end if
+        print(c.green + "<b>rshell server started on " + rcomp.public_ip + ":1222" + c.ennd)
+        print(c.grey + "  run rshell infect on targets to plant callback" + c.ennd)
+    else
+        print(c.cyan + "Launching phantom on target..." + c.ennd)
+        comp.launch(remoteBin)
+        print(c.green + "<b>propagate: phantom deployed to " + rcomp.public_ip + c.ennd)
+    end if
+end function
+
+// ── PwnLan ───────────────────────────────────────────────────────
+PwnLan = function()
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>pwnlan: not holding remote shell" + c.ennd)
+        return
+    end if
+    rcomp = object.host_computer
+
+    // get the target's router
+    router = get_router(rcomp.public_ip)
+    if not router then
+        print(c.yellow + "<b>pwnlan: could not reach target router" + c.ennd)
+        return
+    end if
+
+    devices = router.devices_lan_ip
+    if not devices or devices.len == 0 then
+        print(c.yellow + "<b>pwnlan: no LAN devices found" + c.ennd)
+        return
+    end if
+
+    print(c.cyan + "LAN devices found: " + devices.len + c.ennd)
+    div
+
+    results = []
+    for lanIp in devices
+        if lanIp == rcomp.local_ip then
+            print(c.grey + "  " + lanIp + "  (current target — skipping)" + c.ennd)
+            continue
+        end if
+        print(c.orange + "  scanning " + lanIp + " ..." + c.ennd)
+
+        // get open ports on this device
+        ports = router.device_ports(lanIp)
+        if not ports or ports.len == 0 then
+            print(c.grey + "    no open ports" + c.ennd)
+            continue
+        end if
+
+        grabbed = false
+        for p in ports
+            if grabbed then break
+            portNum = p.port_number
+            print(c.grey + "    trying port " + portNum + " ..." + c.ennd)
+
+            ns = metaxploit.net_use(lanIp, portNum)
+            if not ns then continue
+
+            ml = ns.dump_lib
+            if not ml then continue
+            if ml.is_patched then continue
+
+            mems = metaxploit.scan(ml)
+            if not mems then continue
+
+            for mem in mems
+                if grabbed then break
+                addrs = metaxploit.scan_address(ml, mem).split("Unsafe check: ")
+                for addr in addrs
+                    if grabbed then break
+                    if addr == addrs[0] then continue
+                    val = addr[addr.indexOf("<b>") + 3 : addr.indexOf("</b>")]
+                    obj = ml.overflow(mem, val)
+                    if typeof(obj) == "shell" then
+                        print(c.green + "    [+] shell: " + lanIp + "  " + mem + " " + val + c.ennd)
+                        GETPERMS(obj)
+                        results.push(lanIp + " " + portNum + " " + mem + " " + val)
+                        grabbed = true
+                    else if typeof(obj) == "computer" then
+                        print(c.green + "    [+] computer: " + lanIp + "  " + mem + " " + val + c.ennd)
+                        GETPERMS(obj)
+                        results.push(lanIp + " " + portNum + " " + mem + " " + val)
+                        grabbed = true
+                    end if
+                end for
+            end for
+        end for
+
+        if not grabbed then
+            print(c.grey + "    no exploits found on " + lanIp + c.ennd)
+        end if
+    end for
+
+    div
+    print(c.cyan + "pwnlan complete — " + results.len + "/" + devices.len + " devices exploited" + c.ennd)
+    if results.len > 0 then
+        print(c.gold + "results:" + c.ennd)
+        for r in results
+            print(c.green + "  " + r + c.ennd)
+        end for
+    end if
+end function
+
+// ── LocalScan ────────────────────────────────────────────────────
+LocalScan = function()
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>lscan: not holding remote shell" + c.ennd)
+        return
+    end if
+    comp = object.host_computer
+
+    // find writable path on target
+    writePath = null
+    for path in ["/home/guest", "/tmp", "/root"]
+        f = comp.File(path)
+        if f and f.has_permission("w") then
+            writePath = path
+            break
+        end if
+    end for
+    if not writePath then
+        print(c.yellow + "<b>lscan: no writable path on target" + c.ennd)
+        return
+    end if
+
+    // check ls binary exists locally
+    lsBin = myComp.File(currentPath + "/ls")
+    if not lsBin then
+        print(c.yellow + "<b>lscan: ls binary not found in " + currentPath + c.ennd)
+        print(c.grey + "  build ls.src locally first: build ls.src " + currentPath + c.ennd)
+        return
+    end if
+
+    // upload and run
+    print(c.orange + "Uploading scanner to " + writePath + " ..." + c.ennd)
+    myShell.scp(currentPath + "/ls", writePath, object)
+    binFile = comp.File(writePath + "/ls")
+    if not binFile then
+        print(c.yellow + "<b>lscan: upload failed" + c.ennd)
+        return
+    end if
+
+    print(c.orange + "Running on target hardware..." + c.ennd)
+    gco.lscanResults = null
+    object.launch(writePath + "/ls")
+    binFile.delete
+
+    if not gco.lscanResults then
+        print(c.yellow + "<b>lscan: no results returned" + c.ennd)
+        return
+    end if
+
+    // parse and display results
+    lines = gco.lscanResults.split(char(10))
+    shells = 0
+    files  = 0
+    comps  = 0
+    for line in lines
+        if line == "" then continue
+        parts = line.split(" ")
+        if parts.len < 4 then continue
+        libName = parts[0]
+        libVer  = parts[1]
+        mem     = parts[2]
+        val     = parts[3]
+        print(c.gold + libName + " " + libVer + c.ennd + "  " + c.orange + mem + "  " + val + c.ennd)
+        // attempt overflow to show what each exploit yields
+        ml = metaxploit.load("/lib/" + libName + ".so")
+        if not ml then continue
+        obj = ml.overflow(mem, val)
+        if typeof(obj) == "shell" then
+            print("  <b>shell   : " + c.yellow + obj + c.ennd)
+            shells = shells + 1
+            GETPERMS(obj)
+        end if
+        if typeof(obj) == "computer" then
+            print("  <b>computer: " + c.yellow + obj + c.ennd)
+            comps = comps + 1
+            GETPERMS(obj)
+        end if
+        if typeof(obj) == "file" then
+            print("  <b>file    : " + c.yellow + obj.name + c.ennd)
+            files = files + 1
+        end if
+    end for
+    print(char(10) + c.cyan + "lscan complete — shells:" + shells + "  files:" + files + "  computers:" + comps + c.ennd)
+end function
+
+
+
+// ── Upgrade ───────────────────────────────────────────────────────
+// Uses aptclient to check and upgrade phantom's local lib dependencies
+// check_upgrade(path) → 0=ok, 1=needs update, string=error
+// install(pkg, path)  → "" on success, error string on failure
+Upgrade = function(checkOnly)
+    apt = include_lib("/lib/aptclient.so")
+    if not apt then
+        print(c.yellow + "<b>upgrade: aptclient.so not found in /lib" + c.ennd)
+        return
+    end if
+
+    // [full_path, package_name, install_dir]
+    targets = [
+        ["/lib/metaxploit.so",   "metaxploit.so",    "/lib"],
+        ["/lib/librshell.so",    "librshell.so",     "/lib"],
+        ["/lib/crypto.so",       "crypto.so",        "/lib"],
+        ["/bin/rshell_interface","rshell_interface",  "/bin"]]
+
+    needsUpdate = []
+    for t in targets
+        if not myComp.File(t[0]) then continue
+        result = apt.check_upgrade(t[0])
+        if result == 0 then
+            print(c.grey + "  " + t[0] + "  ok" + c.ennd)
+        else if result == 1 then
+            print(c.gold + "  " + t[0] + "  update available" + c.ennd)
+            needsUpdate.push(t)
+        else
+            print(c.yellow + "  " + t[0] + "  " + result + c.ennd)
+        end if
+    end for
+
+    if needsUpdate.len == 0 then
+        print(c.cyan + "All libs up to date" + c.ennd)
+        return
+    end if
+
+    if checkOnly then
+        print(c.cyan + needsUpdate.len + " update(s) available — run upgrade -u to install" + c.ennd)
+        return
+    end if
+
+    print(c.orange + "Installing updates..." + c.ennd)
+    updated = 0
+    for t in needsUpdate
+        result = apt.install(t[1], t[2])
+        if result == "" or result == null then
+            print(c.lime + "  [+] " + t[0] + c.ennd)
+            updated = updated + 1
+        else
+            print(c.yellow + "  failed: " + t[0] + "  " + result + c.ennd)
+        end if
+    end for
+    print(c.cyan + "upgrade complete — " + updated + "/" + needsUpdate.len + " updated" + c.ennd)
+end function
+
+// ── UpdateLib ─────────────────────────────────────────────────────
+// Scans target's /lib, finds exploitable libs, updates gco.edb
+UpdateLib = function()
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>updatelib: need remote shell" + c.ennd)
+        return
+    end if
+    rcomp = object.host_computer
+    print(c.orange + "Uploading scanner to target..." + c.ennd)
+    me = get_shell
+    me.scp(currentPath + "/metaxploit.so", "/home/guest", object)
+
+    q = char(34)
+    n = char(10)
+    rcomp.touch("/home/guest", "ulb.src")
+    sf = rcomp.File("/home/guest/ulb.src")
+    if not sf then
+        print(c.yellow + "<b>updatelib: could not write script" + c.ennd)
+        return
+    end if
+
+    src = "selfPath = program_path.split(char(47))[:-1].join(char(47))" + n
+    src = src + "metaxploit = include_lib(selfPath + char(47) + " + q + "metaxploit.so" + q + ")" + n
+    src = src + "if not metaxploit then metaxploit = include_lib(" + q + "/lib/metaxploit.so" + q + ")" + n
+    src = src + "if not metaxploit then exit(" + q + "no meta" + q + ")" + n
+    src = src + "gco = get_custom_object" + n
+    src = src + "results = []" + n
+    src = src + "folder = host_computer.File(" + q + "/lib" + q + ")" + n
+    src = src + "if not folder then exit()" + n
+    src = src + "for lib in folder.get_files" + n
+    src = src + "  if not lib.is_binary then continue" + n
+    src = src + "  ml = metaxploit.load(" + q + "/lib/" + q + " + lib.name)" + n
+    src = src + "  if not ml then continue" + n
+    src = src + "  mems = metaxploit.scan(ml)" + n
+    src = src + "  if not mems then continue" + n
+    src = src + "  for mem in mems" + n
+    src = src + "    items = metaxploit.scan_address(ml, mem).split(" + q + "Unsafe check: " + q + ")" + n
+    src = src + "    if not items then continue" + n
+    src = src + "    for item in items" + n
+    src = src + "      if item == items[0] then continue" + n
+    src = src + "      p1 = item.indexOf(" + q + "<b>" + q + ")" + n
+    src = src + "      p2 = item.indexOf(" + q + "</b>" + q + ")" + n
+    src = src + "      if p1 == null or p2 == null then continue" + n
+    src = src + "      val = item[p1+3:p2]" + n
+    src = src + "      if val and val != " + q + q + " then results.push(ml.lib_name + char(1) + ml.version + char(1) + mem + char(1) + val)" + n
+    src = src + "    end for" + n
+    src = src + "  end for" + n
+    src = src + "end for" + n
+    src = src + "gco.ulbResults = results.join(char(10))" + n
+    src = src + "gco.ulbCount = results.len" + n
+
+    sf.set_content(src)
+    print(c.orange + "Building on target..." + c.ennd)
+    object.build("/home/guest/ulb.src", "/home/guest", false)
+    bf = rcomp.File("/home/guest/ulb")
+    if not bf then
+        print(c.yellow + "<b>updatelib: build failed" + c.ennd)
+        sf.delete
+        mxf = rcomp.File("/home/guest/metaxploit.so")
+        if mxf then mxf.delete
+        return
+    end if
+
+    gco.ulbResults = null
+    gco.ulbCount = 0
+    print(c.orange + "Scanning libs on target..." + c.ennd)
+    object.launch("/home/guest/ulb")
+
+    sf.delete
+    bf.delete
+    mxf = rcomp.File("/home/guest/metaxploit.so")
+    if mxf then mxf.delete
+
+    if not gco.ulbResults or gco.ulbCount == 0 then
+        print(c.yellow + "<b>updatelib: no exploitable libs found" + c.ennd)
+        return
+    end if
+
+    added = 0
+    for line in gco.ulbResults.split(char(10))
+        if line == "" then continue
+        parts = line.split(char(1))
+        if parts.len < 4 then continue
+        prev = globals.edb.len
+        EdbAdd(parts[0], parts[1], parts[2], parts[3])
+        if globals.edb.len > prev then
+            added = added + 1
+            print(c.lime + "  [+] " + parts[0] + " v" + parts[1] + "  " + parts[2] + " / " + parts[3] + c.ennd)
+        end if
+    end for
+
+    div
+    print(c.cyan + "updatelib: " + added + " new exploit(s) added to edb  (" + globals.edb.len + " total)" + c.ennd)
+end function
+
+// ── ScanRemoteLib ─────────────────────────────────────────────────
+// loads a lib FROM the remote router and scans with bounce to LAN IP
+// safe — never loads insecure libs on your own machine
+ScanRemoteLib = function(ip, port, bounceIp, libName, mem, val)
+    if not mem then mem = "0x1F000FB5"
+    if not val then val = "length"
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>scan -lib: not holding remote shell" + c.ennd)
+        return
+    end if
+    rcomp = object.host_computer
+
+    // upload our metaxploit to router
+    print(c.orange + "Jumping metaxploit to router..." + c.ennd)
+    me = get_shell
+    upDir = "/lib"
+    mxResult = me.scp(currentPath + "/metaxploit.so", "/lib", object)
+    if typeof(mxResult) == "string" and mxResult != "" then
+        // /lib not writable — fall back to /home/guest
+        upDir = "/home/guest"
+        me.scp(currentPath + "/metaxploit.so", "/home/guest", object)
+    end if
+
+    // write scanner src to router
+    rcomp.touch("/home/guest", "slx.src")
+    srcFile = rcomp.File("/home/guest/slx.src")
+    if not srcFile then
+        print(c.yellow + "<b>scan -lib: could not write script" + c.ennd)
+        return
+    end if
+
+    q = char(34)
+    n = char(10)
+    src = "gco = get_custom_object" + n
+    src = src + "selfPath = program_path.split(char(47))[:-1].join(char(47))" + n
+    src = src + "metaxploit = include_lib(selfPath + char(47) + " + q + "metaxploit.so" + q + ")" + n
+    src = src + "if not metaxploit then metaxploit = include_lib(" + q + "/lib/metaxploit.so" + q + ")" + n
+    src = src + "if not metaxploit then metaxploit = include_lib(" + q + "/home/guest/metaxploit.so" + q + ")" + n
+    src = src + "if not metaxploit then exit(" + q + "no metaxploit" + q + ")" + n
+    src = src + "ml = metaxploit.load(" + q + "/lib/" + q + " + gco.slxLib)" + n
+    src = src + "if not ml then exit(" + q + "lib not found" + q + ")" + n
+    src = src + "obj = ml.overflow(gco.slxMem, gco.slxVal, gco.slxBounce)" + n
+    src = src + "gco.slxType = typeof(obj)" + n
+    src = src + "if typeof(obj) == " + q + "computer" + q + " or typeof(obj) == " + q + "shell" + q + " then" + n
+    src = src + "  gco.slxObject = obj" + n
+    src = src + "end if" + n
+
+    srcFile.set_content(src)
+    print(c.orange + "Building scanner on router..." + c.ennd)
+    object.build("/home/guest/slx.src", "/home/guest", false)
+    binFile = rcomp.File("/home/guest/slx")
+    if not binFile then
+        print(c.yellow + "<b>scan -lib: build failed" + c.ennd)
+        srcFile.delete
+        mxf = rcomp.File("/home/guest/metaxploit.so")
+        if mxf then mxf.delete
+        return
+    end if
+
+    gco.slxLib    = libName
+    gco.slxMem    = mem
+    gco.slxVal    = val
+    gco.slxBounce = bounceIp
+    gco.slxType   = null
+    gco.slxObject = null
+    print(c.orange + "Bouncing to " + bounceIp + " via " + libName + " on router..." + c.ennd)
+    object.launch("/home/guest/slx")
+
+    // cleanup
+    srcFile.delete
+    binFile.delete
+    mxf = rcomp.File(upDir + "/metaxploit.so")
+    if mxf then mxf.delete
+
+    if not gco.slxType or gco.slxType == "null" then
+        print(c.yellow + "<b>scan -lib: exploit failed for " + bounceIp + c.ennd)
+        return
+    end if
+
+    print(c.green + "  [+] " + gco.slxType + " on " + bounceIp + c.ennd)
+
+    if gco.slxObject then
+        globals.object = gco.slxObject
+        globals.remotePath = "/"
+        GETPERMS(globals.object)
+        gco.slxObject = null
+    end if
+end function
