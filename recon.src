@@ -1,6 +1,8 @@
-// recon.src | netmap + proxy
-// netmap.src  |  phantom module  |  LAN reconnaissance
+// ================================================================
+//  recon.src  |  reconnaissance & proxy
+// ================================================================
 
+// ── NetMap ────────────────────────────────────────────────────
 NetMap = function()
     if typeof(object) == "shell" then
         rcomp = object.host_computer
@@ -13,33 +15,75 @@ NetMap = function()
         return
     end if
 
-    // try getting router from public IP first, then local IP
+    // recursive device discovery
+    deviceList = []
+    getDevicesNM = function(router)
+        if router == null then return
+        ip = router.local_ip
+        if deviceList.indexOf(ip) == null then deviceList.push(ip)
+        devices = router.devices_lan_ip
+        if not devices then return
+        for device in devices
+            if device == ip then continue
+            if deviceList.indexOf(device) != null then continue
+            subRouter = get_router(device)
+            subSwitch = get_switch(device)
+            if subRouter then
+                deviceList.push(device)
+                getDevicesNM(subRouter)
+            else if subSwitch then
+                deviceList.push(device)
+                getDevicesNM(subSwitch)
+            else
+                deviceList.push(device)
+            end if
+        end for
+    end function
+
     router = get_router(pubIp)
     if not router then router = get_router(rcomp.local_ip)
     if not router then
         print(c.yellow + "<b>netmap: could not reach target router" + c.ennd)
         return
     end if
+    getDevicesNM(router)
 
-    devices = router.devices_lan_ip
-    if not devices or devices.len == 0 then
-        print(c.yellow + "<b>netmap: no LAN devices found" + c.ennd)
-        return
-    end if
+    // fill gaps
+    gapList = []
+    for existingIp in deviceList
+        parts = existingIp.split(".")
+        if parts.len < 4 then continue
+        subnet = parts[0] + "." + parts[1] + "." + parts[2] + "."
+        lastOctet = parts[3].to_int
+        i = 1
+        while i < lastOctet
+            candidate = subnet + i
+            if deviceList.indexOf(candidate) == null and gapList.indexOf(candidate) == null then
+                gapList.push(candidate)
+            end if
+            i = i + 1
+        end while
+    end for
+    for gapIp in gapList
+        deviceList.push(gapIp)
+    end for
 
     print(char(10) + c.cyan + "<b>NETMAP  " + rcomp.public_ip + c.ennd)
     print(c.grey + "router kernel: " + router.kernel_version + c.ennd)
     print(c.grey + "firewall rules: " + router.firewall_rules + c.ennd)
-    print(c.grey + "devices found: " + devices.len + c.ennd)
+    print(c.grey + "devices found: " + deviceList.len + c.ennd)
     print(c.grey + "----------------------------------------------------------------" + c.ennd)
 
-    for lanIp in devices
+    for lanIp in deviceList
         tag = ""
         if lanIp == rcomp.local_ip then tag = c.gold + "  ← current target" + c.ennd
 
         print(char(10) + c.gold + "<b>" + lanIp + "</b>" + c.ennd + tag)
 
-        ports = router.device_ports(lanIp)
+        // get the right router for this device
+        devRouter = get_router(lanIp)
+        if not devRouter then devRouter = router
+        ports = devRouter.device_ports(lanIp)
         if not ports or ports.len == 0 then
             print(c.grey + "  no open ports" + c.ennd)
             continue
@@ -48,7 +92,7 @@ NetMap = function()
         // build port table
         info = "  PORT STATE SERVICE VERSION"
         for p in ports
-            svc   = router.port_info(p)
+            svc   = devRouter.port_info(p)
             state = "open"
             if p.is_closed then state = "closed"
             info = info + char(10) + "  " + p.port_number + " " + state + " " + svc
@@ -90,8 +134,8 @@ NetMap = function()
     print(char(10) + c.grey + "----------------------------------------------------------------" + c.ennd)
     print(c.cyan + "netmap complete" + c.ennd)
 end function
-// proxy.src  |  phantom module  |  auto proxy chain builder
 
+// ── Proxy ─────────────────────────────────────────────────────
 Proxy = function(hops)
     if typeof(hops) != "number" or hops < 1 then hops = 1
     print(char(10) + c.cyan + "<b>PROXY CHAIN  building " + hops + " hop(s)..." + c.ennd)
@@ -196,6 +240,7 @@ Proxy = function(hops)
     gco.proxyReady = true
 end function
 
+// ── ProxyStatus ───────────────────────────────────────────────
 ProxyStatus = function()
     if not gco.hasIndex("proxyChain") or not gco.proxyChain or gco.proxyChain.len == 0 then
         print(c.yellow + "no proxy chain active" + c.ennd)
@@ -213,6 +258,7 @@ ProxyStatus = function()
     print(c.grey + "   └─ " + c.ennd + c.orange + "target" + c.ennd)
 end function
 
+// ── ProxyClear ────────────────────────────────────────────────
 ProxyClear = function()
     gco.proxyChain = null
     gco.proxyDepth = 0
@@ -220,9 +266,8 @@ ProxyClear = function()
     globals.remotePath = "/"
     print(c.cyan + "proxy chain cleared" + c.ennd)
 end function
-// hacklan.src  |  phantom module  |  LAN bounce using jump technique
-// copies YOUR metaxploit to target, scans target libs, bounces to LAN IP
 
+// ── HackLan ───────────────────────────────────────────────────
 HackLan = function(lanIp)
     if typeof(object) != "shell" then
         print(c.yellow + "<b>hacklan: not holding remote shell" + c.ennd)
