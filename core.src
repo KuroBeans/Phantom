@@ -206,7 +206,14 @@ RShell = function(args)
         end if
         print(c.orange + "Installing rshell server on " + rcomp.public_ip + "..." + c.ennd)
         me = get_shell
-        me.scp(currentPath + "/librshell.so", "/lib", object)
+        // upload librshell.so - try currentPath then local /lib
+        lrBin = myComp.File(currentPath + "/librshell.so")
+        if not lrBin then lrBin = myComp.File("/lib/librshell.so")
+        if lrBin then
+            me.scp(lrBin.path, "/lib", object)
+        else
+            print(c.yellow + "  warning: librshell.so not found locally — target needs it in /lib" + c.ennd)
+        end if
         // run rshell-server script exactly as in-game
         q = char(34)
         n = char(10)
@@ -216,7 +223,9 @@ RShell = function(args)
             print(c.yellow + "<b>rshell init: could not write script" + c.ennd)
             return
         end if
-        src = "rshelld = include_lib(" + q + "/lib/librshell.so" + q + ")" + n
+        src = "selfPath = program_path.split(char(47))[:-1].join(char(47))" + n
+        src = src + "rshelld = include_lib(" + q + "/lib/librshell.so" + q + ")" + n
+        src = src + "if not rshelld then rshelld = include_lib(selfPath + char(47) + " + q + "librshell.so" + q + ")" + n
         src = src + "if not rshelld then exit(" + q + "librshell.so not found" + q + ")" + n
         src = src + "output = rshelld.install_service" + n
         src = src + "if output != true then exit(output)" + n
@@ -261,7 +270,12 @@ RShell = function(args)
         if args.len >= 3 then port = args[2].to_int
         if args.len >= 4 then procName = args[3]
         rcomp = object.host_computer
-        print(c.orange + "Infecting " + rcomp.public_ip + " → " + serverIp + ":" + port + " as '" + procName + "'..." + c.ennd)
+        print(c.orange + "Infecting " + rcomp.public_ip + " -> " + serverIp + ":" + port + " as '" + procName + "'..." + c.ennd)
+        // upload metaxploit so the rsc script can find it via selfPath
+        me = get_shell
+        mxBin = myComp.File(currentPath + "/metaxploit.so")
+        if not mxBin then mxBin = myComp.File("/lib/metaxploit.so")
+        if mxBin then me.scp(mxBin.path, "/home/guest", object)
         // write rshell_client call to target — runs on target's metaxploit
         q = char(34)
         n = char(10)
@@ -608,7 +622,7 @@ EdbSave = function()
     end if
     if f and typeof(f) == "file" then
         wr = f.set_content(out)
-        if wr != null and wr != "" then
+        if typeof(wr) == "string" and wr != "" then
             print(c.yellow + "edb: save error: " + wr + c.ennd)
         end if
     else
