@@ -1,6 +1,3 @@
-
-
-
 // ================================================================
 //  ENTRY POINT
 // ================================================================
@@ -597,6 +594,228 @@ while true
     // ── help ─────────────────────────────────────────────────────
     if cmd == "help" then
         if inp.len == 1 then ShowHelp(null) else ShowHelp(inp[1])
+// ================================================================
+// COMPLETE AUTOROOT COMMAND - ALL MODES NOW USE CHAINSAW
+// ================================================================
+// Replace the entire "else if cmd == "autoroot"" block in phantom.src
+// with this code. Works for: autoroot | autoroot --stack | grab...autoroot
+
+    // ── autoroot ─────────────────────────────────────────────────
+    else if cmd == "autoroot" then
+        if inp.len == 2 and inp[1] == "--stack" then
+            // ChainSaw deploy to all stack objects
+            if objectStack.len == 0 then
+                print(c.yellow + "<b>autoroot --stack: stack is empty" + c.ennd)
+            else
+                // Load ChainSaw into gco first
+                print(c.orange + "Loading ChainSaw..." + c.ennd)
+                ChainSaw.load
+                wait(1)
+                
+                print(char(10) + c.cyan + "<b>AUTOROOT STACK (ChainSaw)" + c.ennd)
+                print(c.grey + "  targeting " + objectStack.len + " object(s)" + c.ennd)
+                print(c.grey + "================================================================" + c.ennd)
+                rooted = 0
+                idx = 1
+                for stackObj in objectStack
+                    if typeof(stackObj) != "shell" then
+                        idx = idx + 1
+                        continue
+                    end if
+                    globals.object = stackObj
+                    globals.remotePath = "/"
+                    comp = stackObj.host_computer
+                    print(char(10) + c.orange + "[" + idx + "/" + objectStack.len + "] " + comp.public_ip + c.ennd)
+                    
+                    rcePath = "/home/guest"
+                    rceName = "chainsaw_rce"
+                    rceSrc = rcePath + "/" + rceName + ".src"
+                    
+                    n = char(10)
+                    rceLines = []
+                    rceLines.push("chainsaw = get_custom_object.chainsaw")
+                    rceLines.push("chainsaw.load_samples")
+                    rceLines.push("chainsaw.load_pregens")
+                    rceLines.push("chainsaw.load_chains")
+                    rceLines.push("chainsaw.crack(false)")
+                    rceString = rceLines.join(n)
+                    
+                    comp.touch(rcePath, rceName + ".src")
+                    rceFile = comp.File(rceSrc)
+                    if not rceFile then
+                        print(c.yellow + "  could not create RCE script" + c.ennd)
+                    else
+                        rceFile.set_content(rceString)
+                        print(c.grey + "  building chainsaw_rce..." + c.ennd)
+                        buildRes = stackObj.build(rceSrc, rcePath)
+                        if typeof(buildRes) == "string" and buildRes != "" then
+                            print(c.yellow + "  build failed: " + buildRes + c.ennd)
+                        else
+                            print(c.grey + "  launching ChainSaw..." + c.ennd)
+                            stackObj.launch(rcePath + "/" + rceName)
+                            wait(2)
+                            
+                            gcoCS = get_custom_object
+                            if gcoCS.hasIndex("chainsaw") and gcoCS.chainsaw.shell != null then
+                                globals.object = gcoCS.chainsaw.shell
+                                globals.remotePath = "/"
+                                print(c.green + "  [+] rooted via ChainSaw" + c.ennd)
+                                print(c.gold + "      password: " + gcoCS.chainsaw.password + c.ennd)
+                                
+                                // plant weaklib after root
+                                print(c.orange + "  planting weaklib..." + c.ennd)
+                                srcDir = "/root/InsecureLibs"
+                                libName = "http.so"
+                                dest = "/lib"
+                                srcPath = srcDir + "/" + libName
+                                if myComp.File(srcPath) then
+                                    result = myShell.scp(srcPath, dest, globals.object)
+                                    if typeof(result) == "string" and result != "" then
+                                        print(c.yellow + "  plant failed: " + result + c.ennd)
+                                    else
+                                        print(c.lime + "  [+] planted " + libName + c.ennd)
+                                    end if
+                                else
+                                    print(c.yellow + "  weaklib.so not found" + c.ennd)
+                                end if
+                                
+                                rooted = rooted + 1
+                            else
+                                print(c.yellow + "  ChainSaw failed" + c.ennd)
+                            end if
+                        end if
+                    end if
+                    idx = idx + 1
+                end for
+                div
+                print(c.cyan + "<b>autoroot --stack complete — " + rooted + "/" + objectStack.len + " rooted" + c.ennd)
+            end if
+        else if inp.len >= 2 and inp[1] == "dict" then
+            // Dictionary attack mode: autoroot dict [passwords...]
+            if not object or typeof(object) != "shell" then
+                print(c.yellow + "<b>autoroot dict: need a remote shell" + c.ennd)
+            else
+                comp = object.host_computer
+                print(char(10) + c.cyan + "<b>AUTOROOT (Dictionary Attack)" + c.ennd)
+                print(c.grey + "  target: " + comp.public_ip + c.ennd)
+                
+                pwList = []
+                if inp.len >= 3 then
+                    pwList = inp[2:]
+                else
+                    // default password list
+                    pwList = ["admin", "password", "123456", "root", "toor", "pass", "test", "guest", "letmein", "admin123"]
+                end if
+                
+                print(c.grey + "  trying " + pwList.len + " password(s)..." + c.ennd)
+                cracked = false
+                for pw in pwList
+                    print(c.grey + "  trying: " + pw + c.ennd)
+                    result = object.get_shell("root", pw)
+                    if result then
+                        globals.object = result
+                        globals.remotePath = "/"
+                        print(c.green + "<b>[+] ROOTED via dictionary!" + c.ennd)
+                        print(c.gold + "  password: " + pw + c.ennd)
+                        cracked = true
+                        
+                        // plant weaklib after root
+                        print(c.orange + "  planting weaklib..." + c.ennd)
+                        srcDir = "/root/InsecureLibs"
+                        libName = "http.so"
+                        dest = "/lib"
+                        srcPath = srcDir + "/" + libName
+                        if myComp.File(srcPath) then
+                            plantResult = myShell.scp(srcPath, dest, globals.object)
+                            if typeof(plantResult) == "string" and plantResult != "" then
+                                print(c.yellow + "  plant failed: " + plantResult + c.ennd)
+                            else
+                                print(c.lime + "  [+] planted " + libName + c.ennd)
+                            end if
+                        else
+                            print(c.yellow + "  weaklib.so not found" + c.ennd)
+                        end if
+                        break
+                    end if
+                end for
+                if not cracked then
+                    print(c.yellow + "<b>  dictionary attack failed" + c.ennd)
+                end if
+            end if
+        else if inp.len == 1 or inp.len == 4 then
+            // Single target mode: autoroot (held shell) OR autoroot [ip] [user] [pass] (ignored, uses held shell)
+            if not object or typeof(object) != "shell" then
+                print(c.yellow + "<b>autoroot: need a remote shell to deploy ChainSaw" + c.ennd)
+            else
+                // Load ChainSaw into gco first
+                print(c.orange + "Loading ChainSaw..." + c.ennd)
+                ChainSaw.load
+                wait(1)
+                
+                comp = object.host_computer
+                print(char(10) + c.cyan + "<b>AUTOROOT (ChainSaw)" + c.ennd)
+                print(c.grey + "  target: " + comp.public_ip + c.ennd)
+                
+                rcePath = "/home/guest"
+                rceName = "chainsaw_rce"
+                rceSrc = rcePath + "/" + rceName + ".src"
+                
+                n = char(10)
+                rceLines = []
+                rceLines.push("chainsaw = get_custom_object.chainsaw")
+                rceLines.push("chainsaw.load_samples")
+                rceLines.push("chainsaw.load_pregens")
+                rceLines.push("chainsaw.load_chains")
+                rceLines.push("chainsaw.crack(false)")
+                rceString = rceLines.join(n)
+                
+                comp.touch(rcePath, rceName + ".src")
+                rceFile = comp.File(rceSrc)
+                if not rceFile then
+                    print(c.yellow + "  could not create RCE script" + c.ennd)
+                else
+                    rceFile.set_content(rceString)
+                    print(c.orange + "  building chainsaw_rce..." + c.ennd)
+                    buildRes = object.build(rceSrc, rcePath)
+                    if typeof(buildRes) == "string" and buildRes != "" then
+                        print(c.yellow + "  build failed: " + buildRes + c.ennd)
+                    else
+                        print(c.orange + "  launching ChainSaw..." + c.ennd)
+                        object.launch(rcePath + "/" + rceName)
+                        wait(2)
+                        
+                        gcoCS = get_custom_object
+                        if gcoCS.hasIndex("chainsaw") and gcoCS.chainsaw.shell != null then
+                            globals.object = gcoCS.chainsaw.shell
+                            globals.remotePath = "/"
+                            print(c.green + "<b>[+] ROOTED via ChainSaw!" + c.ennd)
+                            print(c.gold + "  password: " + gcoCS.chainsaw.password + c.ennd)
+                            
+                            // plant weaklib after root
+                            print(c.orange + "  planting weaklib..." + c.ennd)
+                            srcDir = "/root/InsecureLibs"
+                            libName = "weaklib.so"
+                            dest = "/lib"
+                            srcPath = srcDir + "/" + libName
+                            if myComp.File(srcPath) then
+                                result = myShell.scp(srcPath, dest, globals.object)
+                                if typeof(result) == "string" and result != "" then
+                                    print(c.yellow + "  plant failed: " + result + c.ennd)
+                                else
+                                    print(c.lime + "  [+] planted " + libName + c.ennd)
+                                end if
+                            else
+                                print(c.yellow + "  weaklib.so not found" + c.ennd)
+                            end if
+                        else
+                            print(c.yellow + "  ChainSaw failed" + c.ennd)
+                        end if
+                    end if
+                end if
+            end if
+        else
+            print("<b>Usage: autoroot  |  autoroot --stack  |  autoroot dict [pw1 pw2...]")
+        end if
 
     // ── tree ─────────────────────────────────────────────────────
     else if cmd == "tree" then
@@ -1742,17 +1961,26 @@ while true
         end if
 
     // ── proxy ────────────────────────────────────────────────────
+//================================================================================
+///PHANTOM.SRC PROXY COMMAND UPDATE
+//================================================================================
+ 
+    // ── proxy ────────────────────────────────────────────────────
     else if cmd == "proxy" then
         if inp.len == 2 then
-            Proxy(inp[1].to_int)
+            ProxyWithChainSaw(inp[1].to_int)
         else
-            Proxy(1)
+            ProxyWithChainSaw(1)
         end if
-        // autoroot the final hop automatically
+        // autoroot the final hop automatically via ChainSaw
         if gco.hasIndex("proxyReady") and gco.proxyReady then
             gco.proxyReady = false
-            print(char(10) + c.orange + "Autorooting final hop..." + c.ennd)
-            AutoRoot(null, null, null)
+            // ChainSaw attack already happened in ProxyWithChainSaw
+            if IsRoot(globals.object) then
+                print(char(10) + c.green + "<b>Proxy chain + ChainSaw complete — root shell ready" + c.ennd)
+            else
+                print(char(10) + c.yellow + "<b>Proxy chain complete — ChainSaw crack failed, guest shell only" + c.ennd)
+            end if
         end if
 
     // ── proxystatus ──────────────────────────────────────────────
@@ -3245,6 +3473,7 @@ while true
                 print(c.lime + "  logged " + objectStack.len + " object(s) + " + totalCreds + " credential(s) to " + logPath + c.ennd)
             end if
         end if
+
 
     // ── log ──────────────────────────────────────────────────────
     else if cmd == "log" then
