@@ -1,0 +1,608 @@
+// ================================================================
+//  misc.src  |  phantom module  |  macro-state commands + leftovers
+// ================================================================
+// These commands directly read/write macroQueue, pipeQueue, or
+// pipeFailed as part of the main loop's control flow (rather than
+// just printing/querying), so they're grouped here instead of in
+// a topic file. They mutate globals exactly like the dispatcher
+// branches they're replacing did.
+
+// ── sleep ─────────────────────────────────────────────────────────
+CmdSleep = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: sleep <seconds>")
+    else
+        secs = inp[1].to_int
+        if typeof(secs) == "number" and secs > 0 then
+            wait(secs)
+        else
+            print(c.yellow + "<b>sleep: invalid seconds" + c.ennd)
+        end if
+    end if
+end function
+
+// ── pause ─────────────────────────────────────────────────────────
+CmdPause = function(inp)
+    msg = "Press Enter to continue..."
+    if inp.len >= 2 then msg = inp[1:].join(" ")
+    user_input(c.grey + msg + c.ennd, false, false)
+end function
+
+// ── _throw ────────────────────────────────────────────────────────
+CmdThrow = function(inp)
+    msg = ""
+    if inp.len >= 2 then msg = inp[1:].join(" ")
+    globals.throwMessage = msg
+    globals.pipeFailed   = true
+    print(c.yellow + "  _throw: " + msg + c.ennd)
+end function
+
+// ── _return ───────────────────────────────────────────────────────
+CmdReturn = function(inp)
+    val = ""
+    if inp.len >= 2 then
+        val = inp[1:].join(" ")
+        // resolve @var
+        if val.len > 1 and val[0:1] == "@" then
+            vn = val[1:]
+            if pipeVars.hasIndex(vn) then val = pipeVars[vn]
+        end if
+    end if
+    globals.pipeResult = val
+    // skip macroQueue to next __funcend__ sentinel
+    k = 0
+    while k < globals.macroQueue.len
+        if globals.macroQueue[k] == "__funcend__" then
+            globals.macroQueue = globals.macroQueue[k + 1:]
+            k = globals.macroQueue.len
+        end if
+        k = k + 1
+    end while
+end function
+
+// ── plant ────────────────────────────────────────────────────────
+CmdPlant = function(inp)
+    if typeof(object) != "shell" then
+        globals.pipeFailed = true
+        print(c.yellow + "<b>plant: need a remote shell — object is " + typeof(object) + c.ennd)
+    else
+        srcDir = "/root/InsecureLibs"
+        libName = inp[0]
+        dest = "/lib"
+        if inp.len >= 2 then libName = inp[1]
+        if inp.len >= 3 then dest = inp[2]
+        srcPath = srcDir + "/" + libName
+        if not myComp.File(srcPath) then
+            print(c.yellow + "<b>plant: " + srcPath + " not found" + c.ennd)
+            return
+        end if
+        print(c.orange + "Planting " + libName + " to " + dest + " on target..." + c.ennd)
+        result = myShell.scp(srcPath, dest, object)
+        if typeof(result) == "string" and result != "" then
+            globals.pipeFailed = true
+            print(c.yellow + "<b>plant: " + result + c.ennd)
+        else
+            print(c.lime + "  [+] planted " + libName + " at " + dest + "/" + libName + c.ennd)
+        end if
+        // also plant metaxploit.so from /root
+        mxSrc = "/root/metaxploit.so"
+        if myComp.File(mxSrc) then
+            mxResult = myShell.scp(mxSrc, dest, object)
+            if typeof(mxResult) == "string" and mxResult != "" then
+                print(c.yellow + "<b>plant: metaxploit.so - " + mxResult + c.ennd)
+            else
+                print(c.lime + "  [+] planted metaxploit.so at " + dest + "/metaxploit.so" + c.ennd)
+            end if
+        end if
+    end if
+end function
+
+// ── chainsaw ─────────────────────────────────────────────────────
+CmdChainsaw = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: chainsaw [run|load|deploy|help] [options]")
+        globals.pipeFailed = true
+        return
+    end if
+
+    subcommand = inp[1]
+
+    if subcommand == "help" then
+        print("ChainSaw - Markov Chain Password Cracker by NitroCynic")
+        print("")
+        print("Commands:")
+        print("  run     - Crack password locally or over network, outputs it")
+        print("  load    - Load into GCO for in-script RCE chains")
+        print("  deploy  - Upload + launch on held remote shell to crack ROOT locally on target")
+        print("")
+        print("Parameters:")
+        print("  --user=USER    User to crack (default: root)")
+        print("  --ip=IP        Remote IP (if blank, cracks local shell)")
+        print("  --port=PORT    Remote port (default: 22)")
+
+    else if subcommand == "run" then
+        cs_params = ["run"]
+        if inp.len > 2 then
+            for i in range(2, inp.len - 1)
+                cs_params.push(inp[i])
+            end for
+        end if
+
+        ChainSaw.parse_params(cs_params)
+        ChainSaw.init
+        result = ChainSaw.crack(true)
+
+        if result then
+            print(c.lime + "Success! Password: " + c.gold + ChainSaw.password + c.ennd)
+            globals.pipeFailed = false
+        else
+            print(c.red + "Failed to crack password" + c.ennd)
+            globals.pipeFailed = true
+        end if
+
+    else if subcommand == "load" then
+        cs_params = ["load"]
+        if inp.len > 2 then
+            for i in range(2, inp.len - 1)
+                cs_params.push(inp[i])
+            end for
+        end if
+        ChainSaw.parse_params(cs_params)
+        ChainSaw.load
+
+        print(c.lime + "ChainSaw loaded into GCO" + c.ennd)
+        globals.pipeFailed = false
+
+    else if subcommand == "deploy" then
+        if typeof(object) != "shell" then
+            globals.pipeFailed = true
+            print(c.yellow + "<b>chainsaw deploy: need a held remote shell — object is " + typeof(object) + c.ennd)
+        else
+            ChainSaw.load
+
+            rcePath = "/home/guest"
+            rceName = "chainsaw_rce"
+            rceSrc  = rcePath + "/" + rceName + ".src"
+
+            rceLines = []
+            rceLines.push("chainsaw = get_custom_object.chainsaw")
+            rceLines.push("chainsaw.init()")
+            rceLines.push("chainsaw.crack()")
+            rceString = rceLines.join(char(10))
+
+            object.host_computer.touch(rcePath, rceName + ".src")
+            rceFile = object.host_computer.File(rceSrc)
+            if not rceFile then
+                globals.pipeFailed = true
+                print(c.yellow + "<b>chainsaw deploy: could not create " + rceSrc + " on target" + c.ennd)
+            else
+                rceFile.set_content(rceString)
+                print(c.orange + "Building chainsaw_rce on target..." + c.ennd)
+                buildRes = object.build(rceSrc, rcePath)
+                if typeof(buildRes) == "string" and buildRes != "" then
+                    globals.pipeFailed = true
+                    print(c.yellow + "<b>chainsaw deploy: remote build failed - " + buildRes + c.ennd)
+                else
+                    print(c.lime + "  [+] built " + rceName + c.ennd)
+                    print(c.cyan + "Launching on target (cracking local root)..." + c.ennd)
+                    object.launch(rcePath + "/" + rceName)
+
+                    gcoCS = get_custom_object
+                    if gcoCS.hasIndex("chainsaw") and gcoCS.chainsaw.shell != null then
+                        globals.object = gcoCS.chainsaw.shell
+                        globals.remotePath = "/"
+                        print(c.lime + "<b>  [+] root shell acquired!" + c.ennd)
+                        print(c.gold + "  password: " + gcoCS.chainsaw.password + c.ennd)
+                        globals.pipeFailed = false
+                    else
+                        globals.pipeFailed = true
+                        print(c.yellow + "<b>chainsaw deploy: launched, but no shell came back yet" + c.ennd)
+                        print(c.grey + "  watch above for live print output, or run 'chainsaw deploy' again" + c.ennd)
+                    end if
+                end if
+            end if
+        end if
+
+    else
+        print(c.yellow + "Unknown chainsaw subcommand: " + subcommand + c.ennd)
+        globals.pipeFailed = true
+    end if
+end function
+
+// ── siphon ───────────────────────────────────────────────────────
+// NOTE: original dispatcher called Siphon(inp[1]) / Siphon(null) but
+// no Siphon() definition has been seen in any file sent so far — it
+// must live in a module not yet shared. Preserving the call as-is;
+// flag if it errors as undefined.
+CmdSiphon = function(inp)
+    if inp.len == 2 then
+        Siphon(inp[1])
+    else
+        Siphon(null)
+    end if
+end function
+
+// ── call / macall ─────────────────────────────────────────────────
+CmdCall = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: call <macro> [arg1 arg2...]")
+        print(c.grey + "  e.g.  call hunt 80" + c.ennd)
+        print(c.grey + "  e.g.  call get_ips | clip @result" + c.ennd)
+    else
+        name = inp[1]
+        args = inp[2:]
+        result = MacroCall(name, args)
+        if result != null then
+            globals.pipeResult = result
+            print(c.teal + "  → " + result + c.ennd)
+        else
+            globals.pipeFailed = true
+        end if
+    end if
+end function
+
+// ── mac ──────────────────────────────────────────────────────────
+CmdMac = function(inp)
+    macDir = "/root/ai/mac"
+    if inp.len == 1 or inp[1] == "list" then
+        d = myComp.File(macDir)
+        if not d then
+            print(c.yellow + "  no macros found — create .txt files in " + macDir + c.ennd)
+        else
+            files = d.get_files
+            if files.len == 0 then
+                print(c.grey + "  no macros in " + macDir + c.ennd)
+            else
+                print(c.cyan + "<b>macros in " + macDir + ":" + c.ennd)
+                for f in files
+                    print(c.gold + "  " + f.name + c.ennd)
+                end for
+            end if
+        end if
+    else if inp[1] == "show" then
+        if inp.len < 3 then
+            print(c.yellow + "<b>usage: mac show <name>" + c.ennd)
+        else
+            name = inp[2]
+            f = myComp.File(macDir + "/" + name + ".txt")
+            if not f then f = myComp.File(macDir + "/" + name)
+            if not f then
+                print(c.yellow + "<b>mac: " + name + " not found in " + macDir + c.ennd)
+            else
+                print(c.cyan + "<b>" + f.name + ":" + c.ennd)
+                lines = f.get_content.split(char(10))
+                i = 1
+                for line in lines
+                    if line != "" then
+                        col = c.grey
+                        if line[0:2] == "//" then col = c.teal
+                        print(col + "  " + i + "  " + line + c.ennd)
+                    end if
+                    i = i + 1
+                end for
+            end if
+        end if
+    else
+        // run macro
+        name = inp[1]
+        extraArgs = inp[2:]
+        globals.macroArgList = []
+        argCount = 0
+        for arg in extraArgs
+            globals.macroArgList.push(arg)
+            argCount = argCount + 1
+        end for
+        f = myComp.File(macDir + "/" + name + ".txt")
+        if not f then f = myComp.File(macDir + "/" + name)
+        if not f then
+            print(c.yellow + "<b>mac: '" + name + "' not found" + c.ennd)
+            print(c.grey + "  create " + macDir + "/" + name + ".txt in the code editor" + c.ennd)
+        else
+            lines = f.get_content.split(char(10))
+            globals.macroQueue = CompileMacroLines(lines, macroArgList, true)
+            if macroQueue.len == 0 then
+                print(c.yellow + "<b>mac: '" + name + "' is empty" + c.ennd)
+            else
+                globals.macroName = name
+                if macroArgList.len > 0 then
+                    print(c.grey + "  args: " + macroArgList.len + c.ennd)
+                    i = 0
+                    while i < macroArgList.len
+                        print(c.grey + "    $" + (i+1) + " = " + macroArgList[i] + c.ennd)
+                        i = i + 1
+                    end while
+                end if
+                print(c.cyan + "<b>running macro '" + name + "' (" + macroQueue.len + " line(s))" + c.ennd)
+            end if
+        end if
+    end if
+end function
+
+// ── exec ─────────────────────────────────────────────────────────
+CmdExec = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: exec [count] <command|macroname|block>")
+        print(c.grey + "  exec 10 grab @t 80 -push" + c.ennd)
+        print(c.grey + "  exec 5 hunt 80" + c.ennd)
+        print(c.grey + "  exec 3 randip | clip @a ; grab @a 80 -push" + c.ennd)
+    else
+        count = inp[1].to_int
+        if count != null and count > 0 then
+            cmdStr = inp[2:].join(" ")
+        else
+            count = 1
+            cmdStr = inp[1:].join(" ")
+        end if
+        // reconstruct full pipe chain
+        if pipeQueue.len > 0 then
+            cmdStr = cmdStr + " | " + pipeQueue.join(" | ")
+            globals.pipeQueue = []
+        end if
+        if cmdStr == "" then
+            print(c.yellow + "<b>exec: missing command" + c.ennd)
+        else
+            macDir = "/root/ai/mac"
+            firstWord = cmdStr.split(" ")[0]
+            macFile = myComp.File(macDir + "/" + firstWord + ".txt")
+            if not macFile then macFile = myComp.File(macDir + "/" + firstWord)
+            if macFile then
+                // ── macro file mode ──────────────────────────
+                globals.macroName = "exec"
+                execArgList = cmdStr.split(" ")[1:]
+                rawLines = macFile.get_content.split(char(10))
+                processedLines = CompileMacroLines(rawLines, execArgList, false)
+                globals.macroQueue = []
+                i = 0
+                while i < count
+                    for ln in processedLines
+                        globals.macroQueue.push(ln)
+                    end for
+                    i = i + 1
+                end while
+                print(c.cyan + "<b>exec: macro '" + firstWord + "' x" + count + " (" + macroQueue.len + " lines)" + c.ennd)
+            else if cmdStr.indexOf(";") != null then
+                // ── inline block mode — ; separates lines ────
+                globals.macroName = "exec"
+                rawParts = cmdStr.split(";")
+                trimmedLines = []
+                for line in rawParts
+                    while line.len > 0 and line[0] == " "
+                        line = line[1:]
+                    end while
+                    while line.len > 0 and line[-1] == " "
+                        line = line[:-1]
+                    end while
+                    trimmedLines.push(line)
+                end for
+                processedLines = CompileMacroLines(trimmedLines, [], false)
+                globals.macroQueue = []
+                i = 0
+                while i < count
+                    for ln in processedLines
+                        globals.macroQueue.push(ln)
+                    end for
+                    i = i + 1
+                end while
+                print(c.cyan + "<b>exec: block x" + count + " (" + macroQueue.len + " lines)" + c.ennd)
+            else
+                // ── single command mode ──────────────────────
+                globals.macroName = "exec"
+                globals.macroQueue = []
+                i = 0
+                while i < count
+                    globals.macroQueue.push(cmdStr)
+                    i = i + 1
+                end while
+                print(c.cyan + "<b>exec: '" + cmdStr + "' x" + count + c.ennd)
+            end if
+        end if
+    end if
+end function
+
+// ── foreach ──────────────────────────────────────────────────────
+CmdForeach = function(inp)
+    if inp.len < 2 then
+        globals.pipeFailed = true
+        print(c.yellow + "<b>usage: foreach @list | cmd @each ..." + c.ennd)
+    else if pipeQueue.len == 0 then
+        globals.pipeFailed = true
+        print(c.yellow + "<b>foreach: no commands — use: foreach @list | cmd1 | cmd2" + c.ennd)
+    else
+        listVal = inp[1]
+        if listVal[0:1] == "@" then
+            globals.pipeFailed = true
+            print(c.yellow + "<b>foreach: @" + listVal[1:] + " not set — use lanenum @" + listVal[1:] + " or clip @" + listVal[1:] + " first" + c.ennd)
+        else
+            items = listVal.split(",")
+            if items.len == 0 or (items.len == 1 and items[0] == "") then
+                globals.pipeFailed = true
+                print(c.yellow + "<b>foreach: list is empty" + c.ennd)
+            else
+                globals.foreachBody = pipeQueue[0]
+                globals.pipeQueue = []
+                globals.foreachItems = items[1:]
+                pipeVars["each"] = items[0]
+                globals.pipeVars["each"] = items[0]
+                globals.pipeQueue.push(foreachBody)
+                print(c.cyan + "<b>foreach: " + items.len + " item(s) — starting with " + items[0] + c.ennd)
+            end if
+        end if
+    end if
+end function
+
+// ── break ────────────────────────────────────────────────────────
+CmdBreak = function(inp)
+    loopIdx = null
+    k = 0
+    while k < macroQueue.len
+        if macroQueue[k].len >= 9 and macroQueue[k][:9] == "__while__" then
+            loopIdx = k
+            k = macroQueue.len
+        end if
+        k = k + 1
+    end while
+    if loopIdx != null then
+        globals.macroQueue = macroQueue[loopIdx + 1:]
+        globals.pipeFailed = false
+        print(c.grey + "  break: loop exited" + c.ennd)
+    else
+        print(c.grey + "  break: not inside a loop" + c.ennd)
+    end if
+end function
+
+// ── continue ─────────────────────────────────────────────────────
+CmdContinue = function(inp)
+    loopIdx = null
+    k = 0
+    while k < macroQueue.len
+        if macroQueue[k].len >= 9 and macroQueue[k][:9] == "__while__" then
+            loopIdx = k
+            k = macroQueue.len
+        end if
+        k = k + 1
+    end while
+    if loopIdx != null then
+        skipped = loopIdx
+        globals.macroQueue = macroQueue[loopIdx:]
+        globals.pipeFailed = false
+        if skipped > 0 then print(c.grey + "  continue: skipped " + skipped + " line(s)" + c.ennd)
+    else if pipeQueue.len > 0 then
+        globals.pipeQueue = []
+        globals.pipeFailed = false
+    else
+        print(c.grey + "  continue: not inside a loop" + c.ennd)
+    end if
+end function
+
+// ── rlan ─────────────────────────────────────────────────────────
+CmdRlan = function(inp)
+    if not object then
+        print(c.yellow + "<b>rlan: no remote object" + c.ennd)
+        globals.pipeFailed = true
+    else
+        comp = object
+        if typeof(object) == "shell" then comp = object.host_computer
+        lanIp = comp.local_ip
+        if lanIp != null then lanIp = "" + lanIp
+        if lanIp == null or lanIp == "" or lanIp == "null" then
+            print(c.yellow + "<b>rlan: no LAN IP available (public-facing machine?)" + c.ennd)
+            globals.pipeFailed = true
+        else
+            print(c.cyan + "rlan: " + lanIp + c.ennd)
+            globals.pipeResult = lanIp
+            if inp.len >= 2 then
+                k = inp[1]
+                if k[0:1] == "@" then k = k[1:]
+                gco = get_custom_object
+                if not gco.hasIndex("clips") then gco.clips = {}
+                gco.clips[k] = lanIp
+                globals.pipeVars[k] = lanIp
+                print(c.lime + "  @" + k + " = " + lanIp + c.ennd)
+            end if
+        end if
+    end if
+end function
+
+// ── rpub ─────────────────────────────────────────────────────────
+CmdRpub = function(inp)
+    if not object then
+        print(c.yellow + "<b>rpub: no remote object" + c.ennd)
+        globals.pipeFailed = true
+    else
+        comp = object
+        if typeof(object) == "shell" then comp = object.host_computer
+        pubIp = comp.public_ip
+        if pubIp == null or pubIp == "" then
+            print(c.yellow + "<b>rpub: could not get public IP" + c.ennd)
+            globals.pipeFailed = true
+        else
+            print(c.cyan + "rpub: " + pubIp + c.ennd)
+            globals.pipeResult = pubIp
+            if inp.len >= 2 then
+                k = inp[1]
+                if k[0:1] == "@" then k = k[1:]
+                gco = get_custom_object
+                if not gco.hasIndex("clips") then gco.clips = {}
+                gco.clips[k] = pubIp
+                globals.pipeVars[k] = pubIp
+                print(c.lime + "  @" + k + " = " + pubIp + c.ennd)
+            end if
+        end if
+    end if
+end function
+
+// ── ports ────────────────────────────────────────────────────────
+CmdPorts = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: ports <ip> [port list]")
+        print(c.grey + "  e.g.  ports @t" + c.ennd)
+        print(c.grey + "  e.g.  ports @t 80 22 443" + c.ennd)
+    else
+        tgt = inp[1]
+        if inp.len >= 3 then
+            portList = inp[2:]
+        else
+            portList = ["22", "25", "80", "1542", "3306", "3307"]
+        end if
+        print(c.orange + "Scanning " + tgt + " on " + portList.len + " port(s)..." + c.ennd)
+        openPorts = []
+        for p in portList
+            ns = metaxploit.net_use(tgt, p.to_int)
+            if ns then
+                print(c.lime + "  [+] " + p + " open" + c.ennd)
+                openPorts.push(p)
+            else
+                print(c.grey + "  [-] " + p + " closed" + c.ennd)
+            end if
+        end for
+        if openPorts.len == 0 then
+            print(c.yellow + "<b>ports: no open ports found on " + tgt + c.ennd)
+            globals.pipeFailed = true
+        else
+            print(c.cyan + "ports: " + openPorts.len + " open — " + openPorts.join(", ") + c.ennd)
+            globals.pipeResult = tgt
+            pipeVars["port"] = openPorts[0]
+            globals.pipeVars["port"] = openPorts[0]
+            if storeVar != null then
+                gco = get_custom_object
+                if not gco.hasIndex("clips") then gco.clips = {}
+                gco.clips[storeVar] = tgt
+                globals.pipeVars[storeVar] = tgt
+                print(c.lime + "  @" + storeVar + " = " + tgt + c.ennd)
+            end if
+        end if
+    end if
+end function
+
+// ── p (police records) ────────────────────────────────────────────
+CmdP = function(inp)
+    if typeof(object) != "shell" then
+        print(c.red + "p: must be holding remote shell" + c.ennd)
+    else
+        object.launch("/root/PoliceRecord.exe")
+    end if
+end function
+
+// ── pre (session setup) ───────────────────────────────────────────
+CmdPre = function(inp)
+    me = get_shell
+    me.launch("/usr/bin/Mail.exe")
+    wait(2)
+    me.launch("/usr/bin/Browser.exe")
+    wait(2)
+    me.launch("/usr/bin/FileExplorer.exe")
+    wait(2)
+    me.launch("/usr/bin/Terminal.exe")
+    wait(2)
+    me.launch("/usr/bin/Terminal.exe")
+end function
+
+// ── exit / quit ────────────────────────────────────────────────────
+CmdExit = function(inp)
+    exit
+end function
+
+// ── null / noop / pass ─────────────────────────────────────────────
+CmdNoop = function(inp)
+    // intentional no-op
+end function
