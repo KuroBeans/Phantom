@@ -2,6 +2,51 @@
 //////////////////// Romote.src /////////////////////////////
 ////////////////////////////////////////////////////////////
 
+// ── Cmd wrappers (dispatch table entries — see commands.src) ─────
+CmdTerm = function(inp)
+    myShell.launch("/usr/bin/Terminal.exe")
+end function
+
+CmdMail = function(inp)
+    myShell.launch("/usr/bin/Mail.exe")
+end function
+
+CmdBrowser = function(inp)
+    myShell.launch("/usr/bin/Browser.exe")
+end function
+
+CmdFileExplorer = function(inp)
+    myShell.launch("/usr/bin/FileExplorer.exe")
+end function
+
+CmdPwnlan = function(inp)
+    PwnLan
+end function
+
+CmdLscan = function(inp)
+    LocalScan
+end function
+
+CmdUpgrade = function(inp)
+    if inp.len >= 2 and inp[1] == "-u" then
+        Upgrade(false)
+    else
+        Upgrade(true)
+    end if
+end function
+
+CmdUpdatelib = function(inp)
+    UpdateLib()
+end function
+
+CmdJump = function(inp)
+    if inp.len == 2 and inp[1] == "--rshell" then
+        Propagate(true)
+    else
+        Propagate(false)
+    end if
+end function
+
 c = {}
 c.red    = "<color=#CC2222>"       // crimson
 c.orange = "<color=#D4621A>"       // burnt sienna
