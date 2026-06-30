@@ -1,0 +1,860 @@
+// ================================================================
+//  stack.src  |  phantom module  |  object stack commands
+// ================================================================
+// Cmd* functions take the tokenized input array `inp` (inp[0] is
+// the command name itself, same convention as the old dispatcher).
+
+// ── push ─────────────────────────────────────────────────────────
+CmdPush = function(inp)
+    if not object then
+        print(c.yellow + "<b>push: no active object to push" + c.ennd)
+    else
+        objectStack.push(object)
+        print(c.green + "pushed object to stack  [" + objectStack.len + " in stack]" + c.ennd)
+        if typeof(object) == "shell" then
+            print(c.grey + "  " + object.host_computer.public_ip + "  " + object.host_computer.local_ip + c.ennd)
+        end if
+    end if
+end function
+
+// ── pop ──────────────────────────────────────────────────────────
+CmdPop = function(inp)
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>pop: stack is empty" + c.ennd)
+    else
+        globals.object = objectStack[-1]
+        globals.remotePath = "/"
+        print(c.green + "popped object from stack  [" + objectStack.len + " in stack]" + c.ennd)
+        GETPERMS(globals.object)
+    end if
+end function
+
+// ── stack ────────────────────────────────────────────────────────
+CmdStack = function(inp)
+    if inp.len >= 2 and inp[1] == "-c" then
+        globals.objectStack = []
+        print(c.grey + "stack cleared" + c.ennd)
+    else if objectStack.len == 0 then
+        print(c.grey + "stack is empty" + c.ennd)
+    else
+        print(c.cyan + "<b>" + objectStack.len + " object(s) in stack:" + c.ennd)
+        i = 1
+        for obj in objectStack
+            if typeof(obj) == "shell" then
+                pub  = obj.host_computer.public_ip
+                lan  = obj.host_computer.local_ip
+                name = obj.host_computer.get_name
+                if IsRoot(obj) then
+                    priv = c.lime + "<b>ROOT</b>" + c.ennd
+                else
+                    priv = c.grey + "guest" + c.ennd
+                end if
+                print(c.gold + "  [" + i + "] " + c.ennd + c.white + "<b>shell</b>" + c.ennd + "  " + priv + "  " + name + "  pub:" + c.cyan + pub + c.ennd + "  lan:" + c.cyan + lan + c.ennd)
+            else if typeof(obj) == "computer" then
+                pub  = obj.public_ip
+                lan  = obj.local_ip
+                name = obj.get_name
+                if IsRoot(obj) then
+                    priv = c.lime + "<b>ROOT</b>" + c.ennd
+                else
+                    priv = c.grey + "guest" + c.ennd
+                end if
+                print(c.gold + "  [" + i + "] " + c.ennd + c.white + "<b>computer</b>" + c.ennd + "  " + priv + "  " + name + "  pub:" + c.cyan + pub + c.ennd + "  lan:" + c.cyan + lan + c.ennd)
+            else
+                print(c.gold + "  [" + i + "] " + c.ennd + typeof(obj) + c.ennd)
+            end if
+            i = i + 1
+        end for
+    end if
+end function
+
+// ── swap ─────────────────────────────────────────────────────────
+CmdSwap = function(inp)
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>swap: stack is empty" + c.ennd)
+    else if inp.len == 2 then
+        idx = inp[1].to_int - 1
+        if typeof(idx) != "number" or idx < 0 or idx >= objectStack.len then
+            print(c.yellow + "<b>swap: invalid index" + c.ennd)
+        else
+            prev = object
+            globals.object = objectStack[idx]
+            objectStack[idx] = prev
+            globals.remotePath = "/"
+            print(c.green + "swapped to stack [" + (idx+1) + "]" + c.ennd)
+            GETPERMS(globals.object)
+        end if
+    else
+        if not object then
+            globals.object = objectStack.pop
+        else
+            prev = object
+            globals.object = objectStack.pop
+            objectStack.push(prev)
+        end if
+        globals.remotePath = "/"
+        print(c.green + "swapped with top of stack" + c.ennd)
+        GETPERMS(globals.object)
+    end if
+end function
+
+// ── stackrun ─────────────────────────────────────────────────────
+CmdStackrun = function(inp)
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>stackrun: stack is empty" + c.ennd)
+    else if inp.len < 2 or inp[1] == "help" or inp[1] == "-h" then
+        print(c.cyan + "<b>stackrun - run an operation across every object in the stack" + c.ennd)
+        print(c.white + "<b>file ops (work on shell + computer objects):" + c.ennd)
+        print(c.grey + "  ls [path]                  list a folder (default /)" + c.ennd)
+        print(c.grey + "  tree [path] [depth]        recursive listing (default / depth 3)" + c.ennd)
+        print(c.grey + "  read <file>                print a file's contents" + c.ennd)
+        print(c.grey + "  write <file> <text...>     overwrite a file with text" + c.ennd)
+        print(c.grey + "  rm [-r] <path>             delete a file/folder" + c.ennd)
+        print(c.grey + "  mv <src> <destFolder>      move a file/folder" + c.ennd)
+        print(c.grey + "  cp <src> <destFolder>      copy a file/folder" + c.ennd)
+        print(c.grey + "  chmod <perms> <path>       change permissions (e.g. o-rwx)" + c.ennd)
+        print(c.grey + "  mkdir <path>               create a folder" + c.ennd)
+        print(c.grey + "  touch <path>               create an empty file" + c.ennd)
+        print(c.grey + "  perms <path>               show file permissions/owner" + c.ennd)
+        print(c.white + "<b>computer info ops:" + c.ennd)
+        print(c.grey + "  name                       hostname" + c.ennd)
+        print(c.grey + "  ports                      list open ports" + c.ennd)
+        print(c.grey + "  procs                      running processes" + c.ennd)
+        print(c.grey + "  users                      /home user folders" + c.ennd)
+        print(c.white + "<b>shell-only ops:" + c.ennd)
+        print(c.grey + "  plant [lib] [dest]         upload from /root/InsecureLibs to each (default: libhttp.so -> /lib)" + c.ennd)
+        print(c.grey + "  cmd <program> [args]       launch any program (output stays on target)" + c.ennd)
+        print(c.grey + "  launch <program> [args]    alias of cmd" + c.ennd)
+    else
+        sub = inp[1]
+        i = 1
+        for obj in objectStack
+            if typeof(obj) == "shell" then
+                sComp = obj.host_computer
+            else if typeof(obj) == "computer" then
+                sComp = obj
+            else
+                i = i + 1
+                continue
+            end if
+            label = sComp.public_ip + "/" + sComp.local_ip
+            print(c.cyan + "<b>[" + i + "] " + label + c.ennd)
+
+            if sub == "plant" then
+                srcDir = "/root/InsecureLibs"
+                libName = "libhttp.so"
+                dest = "/home/guest"
+                if inp.len >= 3 then libName = inp[2]
+                if inp.len >= 4 then dest = inp[3]
+                srcPath = srcDir + "/" + libName
+                if not myComp.File(srcPath) then
+                    print(c.yellow + "  plant: " + srcPath + " not found — aborting" + c.ennd)
+                    break
+                end if
+                if typeof(obj) != "shell" then
+                    print(c.grey + "  (computer object - plant needs a shell; skipped)" + c.ennd)
+                else
+                    result = myShell.scp(srcPath, dest, obj)
+                    if result then
+                        print(c.yellow + "  plant failed: " + result + c.ennd)
+                    else
+                        print(c.lime + "  [+] planted " + libName + " at " + dest + "/" + libName + c.ennd)
+                    end if
+                end if
+
+            else if sub == "cmd" or sub == "launch" then
+                if inp.len < 3 then
+                    print(c.yellow + "  missing program path" + c.ennd)
+                else if typeof(obj) != "shell" then
+                    print(c.grey + "  (computer object - needs a shell; skipped)" + c.ennd)
+                else
+                    progPath = inp[2]
+                    progArgs = ""
+                    if inp.len > 3 then progArgs = inp[3:].join(" ")
+                    res = obj.launch(progPath, progArgs)
+                    if res == 1 then
+                        print(c.lime + "  " + progPath + " " + progArgs + c.ennd)
+                    else
+                        print(c.yellow + "  failed (" + str(res) + "): " + progPath + " - not found or not executable" + c.ennd)
+                    end if
+                end if
+
+            else if sub == "read" then
+                if inp.len < 3 then
+                    print(c.yellow + "  missing file path" + c.ennd)
+                else
+                    f = sComp.File(inp[2])
+                    if not f then
+                        print(c.grey + "  not found: " + inp[2] + c.ennd)
+                    else if f.is_folder then
+                        print(c.grey + "  is a folder: " + inp[2] + c.ennd)
+                    else if not f.has_permission("r") then
+                        print(c.grey + "  no read perm: " + inp[2] + c.ennd)
+                    else
+                        content = f.get_content
+                        if content and content != "" then
+                            print(c.white + content + c.ennd)
+                        else
+                            print(c.grey + "  (empty)" + c.ennd)
+                        end if
+                    end if
+                end if
+
+            else if sub == "write" then
+                if inp.len < 4 then
+                    print(c.yellow + "  usage: write <file> <text...>" + c.ennd)
+                else
+                    f = sComp.File(inp[2])
+                    if not f then
+                        parts2 = inp[2].split("/")
+                        newName = parts2[-1]
+                        parent = inp[2][:inp[2].len - newName.len - 1]
+                        if parent == "" then parent = "/"
+                        sComp.touch(parent, newName)
+                        f = sComp.File(inp[2])
+                    end if
+                    if not f then
+                        print(c.yellow + "  could not create " + inp[2] + c.ennd)
+                    else
+                        res = f.set_content(inp[3:].join(" "))
+                        if res == null or res == "" then
+                            print(c.lime + "  wrote " + inp[2] + c.ennd)
+                        else
+                            print(c.yellow + "  write failed: " + res + c.ennd)
+                        end if
+                    end if
+                end if
+
+            else if sub == "rm" then
+                rmPath = ""
+                if inp.len >= 3 and inp[2] == "-r" then
+                    if inp.len >= 4 then rmPath = inp[3]
+                else if inp.len >= 3 then
+                    rmPath = inp[2]
+                end if
+                if rmPath == "" then
+                    print(c.yellow + "  missing path" + c.ennd)
+                else
+                    f = sComp.File(rmPath)
+                    if not f then
+                        print(c.grey + "  not found: " + rmPath + c.ennd)
+                    else
+                        res = f.delete
+                        if res == "" or res == null then
+                            print(c.lime + "  deleted " + rmPath + c.ennd)
+                        else
+                            print(c.yellow + "  rm failed: " + res + c.ennd)
+                        end if
+                    end if
+                end if
+
+            else if sub == "mv" then
+                if inp.len < 4 then
+                    print(c.yellow + "  usage: mv <src> <destFolder>" + c.ennd)
+                else
+                    f = sComp.File(inp[2])
+                    if not f then
+                        print(c.grey + "  not found: " + inp[2] + c.ennd)
+                    else
+                        res = f.move(inp[3])
+                        if res == 1 or res == "" or res == null then
+                            print(c.lime + "  moved " + inp[2] + " -> " + inp[3] + c.ennd)
+                        else
+                            print(c.yellow + "  mv failed: " + str(res) + c.ennd)
+                        end if
+                    end if
+                end if
+
+            else if sub == "cp" then
+                if inp.len < 4 then
+                    print(c.yellow + "  usage: cp <src> <destFolder>" + c.ennd)
+                else
+                    f = sComp.File(inp[2])
+                    if not f then
+                        print(c.grey + "  not found: " + inp[2] + c.ennd)
+                    else
+                        res = f.copy(inp[3])
+                        if res == 1 or res == "" or res == null then
+                            print(c.lime + "  copied " + inp[2] + " -> " + inp[3] + c.ennd)
+                        else
+                            print(c.yellow + "  cp failed: " + str(res) + c.ennd)
+                        end if
+                    end if
+                end if
+
+            else if sub == "chmod" then
+                if inp.len < 4 then
+                    print(c.yellow + "  usage: chmod <perms> <path>" + c.ennd)
+                else
+                    f = sComp.File(inp[3])
+                    if not f then
+                        print(c.grey + "  not found: " + inp[3] + c.ennd)
+                    else
+                        res = f.chmod(inp[2])
+                        if res == "" or res == null then
+                            print(c.lime + "  chmod " + inp[2] + " " + inp[3] + c.ennd)
+                        else
+                            print(c.yellow + "  chmod failed: " + res + c.ennd)
+                        end if
+                    end if
+                end if
+
+            else if sub == "mkdir" then
+                if inp.len < 3 then
+                    print(c.yellow + "  missing path" + c.ennd)
+                else
+                    parts2 = inp[2].split("/")
+                    newName = parts2[-1]
+                    parent = inp[2][:inp[2].len - newName.len - 1]
+                    if parent == "" then parent = "/"
+                    pf = sComp.File(parent)
+                    if not pf then
+                        print(c.grey + "  parent not found: " + parent + c.ennd)
+                    else
+                        res = pf.create_folder(newName)
+                        if res == "" or res == null or res == 1 then
+                            print(c.lime + "  mkdir " + inp[2] + c.ennd)
+                        else
+                            print(c.yellow + "  mkdir failed: " + res + c.ennd)
+                        end if
+                    end if
+                end if
+
+            else if sub == "touch" then
+                if inp.len < 3 then
+                    print(c.yellow + "  missing path" + c.ennd)
+                else
+                    parts2 = inp[2].split("/")
+                    newName = parts2[-1]
+                    parent = inp[2][:inp[2].len - newName.len - 1]
+                    if parent == "" then parent = "/"
+                    res = sComp.touch(parent, newName)
+                    if res == "" or res == null or res == 1 then
+                        print(c.lime + "  touch " + inp[2] + c.ennd)
+                    else
+                        print(c.yellow + "  touch failed: " + res + c.ennd)
+                    end if
+                end if
+
+            else if sub == "perms" then
+                if inp.len < 3 then
+                    print(c.yellow + "  missing path" + c.ennd)
+                else
+                    f = sComp.File(inp[2])
+                    if not f then
+                        print(c.grey + "  not found: " + inp[2] + c.ennd)
+                    else
+                        print(c.white + "  " + f.permissions + "  owner:" + f.owner + "  " + inp[2] + c.ennd)
+                    end if
+                end if
+
+            else if sub == "ls" then
+                lsPath = "/"
+                if inp.len >= 3 then lsPath = inp[2]
+                f = sComp.File(lsPath)
+                if not f then
+                    print(c.grey + "  not found: " + lsPath + c.ennd)
+                else if not f.is_folder then
+                    print(c.grey + "  not a folder: " + lsPath + c.ennd)
+                else
+                    names = []
+                    for sub2 in f.get_folders
+                        names.push(sub2.name + "/")
+                    end for
+                    for fl in f.get_files
+                        names.push(fl.name)
+                    end for
+                    if names.len > 0 then
+                        print(c.white + "  " + names.join("  ") + c.ennd)
+                    else
+                        print(c.grey + "  (empty)" + c.ennd)
+                    end if
+                end if
+
+            else if sub == "tree" then
+                treePath = "/"
+                if inp.len >= 3 then treePath = inp[2]
+                maxDepth = 3
+                if inp.len >= 4 then maxDepth = inp[3].to_int
+                walkStack = [[treePath, 0]]
+                while walkStack.len > 0
+                    cur = walkStack.pop
+                    curPath = cur[0]
+                    curDepth = cur[1]
+                    tf = sComp.File(curPath)
+                    if not tf then continue
+                    pad = ""
+                    d2 = 0
+                    while d2 < curDepth
+                        pad = pad + "  "
+                        d2 = d2 + 1
+                    end while
+                    if tf.is_folder then
+                        print(c.cyan + pad + curPath.split("/")[-1] + "/" + c.ennd)
+                        if curDepth < maxDepth then
+                            for fl in tf.get_files
+                                print(c.white + pad + "  " + fl.name + c.ennd)
+                            end for
+                            subs = tf.get_folders
+                            j = subs.len - 1
+                            while j >= 0
+                                walkStack.push([curPath + "/" + subs[j].name, curDepth + 1])
+                                j = j - 1
+                            end while
+                        end if
+                    else
+                        print(c.white + pad + tf.name + c.ennd)
+                    end if
+                end while
+
+            else if sub == "name" then
+                print(c.white + "  " + sComp.get_name + c.ennd)
+
+            else if sub == "ports" then
+                pts = sComp.get_ports
+                if pts and pts.len > 0 then
+                    for p in pts
+                        st = "closed"
+                        if p.is_closed == 0 then st = "open"
+                        print(c.white + "  " + p.port_number + "  " + st + c.ennd)
+                    end for
+                else
+                    print(c.grey + "  (no ports)" + c.ennd)
+                end if
+
+            else if sub == "procs" then
+                if typeof(obj) == "shell" then
+                    plist = sComp.show_procs
+                    if plist and plist != "" then
+                        print(c.white + plist + c.ennd)
+                    else
+                        print(c.grey + "  (no procs)" + c.ennd)
+                    end if
+                else
+                    print(c.grey + "  (computer object - needs a shell; skipped)" + c.ennd)
+                end if
+
+            else if sub == "users" then
+                hf = sComp.File("/home")
+                if not hf then
+                    print(c.grey + "  no /home" + c.ennd)
+                else
+                    unames = []
+                    for u in hf.get_folders
+                        unames.push(u.name)
+                    end for
+                    if unames.len > 0 then
+                        print(c.white + "  " + unames.join("  ") + c.ennd)
+                    else
+                        print(c.grey + "  (none)" + c.ennd)
+                    end if
+                end if
+
+            else if sub == "ps" then
+                gcoP = get_custom_object
+                if not gcoP.hasIndex("psResults") then gcoP.psResults = []
+                gcoP.psResults = []
+                lanIpP = sComp.local_ip
+                pubIpP = sComp.public_ip
+                procStr = sComp.show_procs
+                if procStr == null or procStr == "" then
+                    print(c.grey + "  (no processes)" + c.ennd)
+                else
+                    print(format_columns(procStr))
+                    for pline in procStr.split(char(10))
+                        if pline == "" then continue
+                        if pline.indexOf("USER") != null and pline.indexOf("PID") != null then continue
+                        gcoP.psResults.push(lanIpP + " | " + pline)
+                    end for
+                end if
+
+            else if sub == "harvest" then
+                homeDir3 = sComp.File("/home")
+                if not homeDir3 then
+                    print(c.grey + "  no /home" + c.ennd)
+                else
+                    harvCount = 0
+                    gcoH = get_custom_object
+                    if not gcoH.hasIndex("harvestResults") then gcoH.harvestResults = []
+                    for user3 in homeDir3.get_folders
+                        for target3 in ["Mail.txt", "Bank.txt"]
+                            hf3 = sComp.File("/home/" + user3.name + "/Config/" + target3)
+                            if not hf3 then continue
+                            if not hf3.has_permission("r") then continue
+                            content3 = hf3.get_content
+                            if not content3 or content3 == "" then continue
+                            print(c.grey + "  " + user3.name + "/" + target3 + c.ennd)
+                            for hline3 in content3.split(char(10))
+                                if hline3 == "" then continue
+                                hparts3 = hline3.split(":")
+                                if hparts3.len < 2 then continue
+                                pw3 = CrackHash(hparts3[1])
+                                if pw3 then
+                                    result3 = sComp.local_ip + " | " + hparts3[0] + " : " + pw3
+                                    print(c.lime + "    " + hparts3[0] + c.ennd + c.grey + " : " + c.ennd + c.gold + "<b>" + pw3 + c.ennd)
+                                    gcoH.harvestResults.push(result3)
+                                    harvCount = harvCount + 1
+                                end if
+                            end for
+                        end for
+                    end for
+                    if harvCount == 0 then
+                        print(c.grey + "  no creds found" + c.ennd)
+                    else
+                        globals.pipeResult = gcoH.harvestResults.join(",")
+                        gcoC2 = get_custom_object
+                        if not gcoC2.hasIndex("clips") then gcoC2.clips = {}
+                        gcoC2.clips["harvested"] = globals.pipeResult
+                        globals.pipeVars["harvested"] = globals.pipeResult
+                    end if
+                end if
+
+            else
+                print(c.yellow + "  unknown mode: " + sub + "  (stackrun help)" + c.ennd)
+            end if
+
+            i = i + 1
+        end for
+        div
+        print(c.cyan + "stackrun complete across " + objectStack.len + " object(s)" + c.ennd)
+    end if
+end function
+
+// ── stackpick ────────────────────────────────────────────────────
+CmdStackpick = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: stackpick <condition>")
+    else if objectStack.len == 0 then
+        print(c.yellow + "<b>stackpick: stack is empty" + c.ennd)
+        globals.pipeFailed = true
+    else
+        condTokens = inp[1:]
+        found = null
+        savedObj = globals.object
+        for obj in objectStack
+            globals.object = obj
+            if EvalCondition(condTokens) then
+                found = obj
+                break
+            end if
+        end for
+        if found != null then
+            globals.object = found
+            if typeof(found) == "shell" then
+                print(c.green + "stackpick: " + found.host_computer.public_ip + " (" + typeof(found) + ")" + c.ennd)
+            else if typeof(found) == "computer" then
+                print(c.green + "stackpick: " + found.public_ip + " (" + typeof(found) + ")" + c.ennd)
+            end if
+        else
+            globals.object = savedObj
+            globals.pipeFailed = true
+            print(c.yellow + "<b>stackpick: no match found" + c.ennd)
+        end if
+    end if
+end function
+
+// ── stackfor ─────────────────────────────────────────────────────
+CmdStackfor = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: stackfor <condition> | <command>")
+    else if objectStack.len == 0 then
+        print(c.yellow + "<b>stackfor: stack is empty" + c.ennd)
+        globals.pipeFailed = true
+    else if pipeQueue.len == 0 then
+        print(c.yellow + "<b>stackfor: no command — use: stackfor <cond> | <cmd>" + c.ennd)
+        globals.pipeFailed = true
+    else
+        condTokens = inp[1:]
+        matches = []
+        savedObj = globals.object
+        for obj in objectStack
+            globals.object = obj
+            if EvalCondition(condTokens) then matches.push(obj)
+        end for
+        globals.object = savedObj
+        if matches.len == 0 then
+            globals.pipeFailed = true
+            globals.pipeQueue = []
+            print(c.yellow + "<b>stackfor: no objects match condition" + c.ennd)
+        else
+            globals.stackforSaved = savedObj
+            globals.stackforBody = pipeQueue[0]
+            globals.pipeQueue = []
+            globals.stackforItems = matches[1:]
+            globals.object = matches[0]
+            globals.pipeQueue.push(stackforBody)
+            if typeof(globals.object) == "shell" then
+                print(c.cyan + "<b>stackfor: " + matches.len + " match(es) — starting with " + globals.object.host_computer.public_ip + c.ennd)
+            else if typeof(globals.object) == "computer" then
+                print(c.cyan + "<b>stackfor: " + matches.len + " match(es) — starting with " + globals.object.public_ip + c.ennd)
+            end if
+        end if
+    end if
+end function
+
+// ── stacktree ────────────────────────────────────────────────────
+CmdStacktree = function(inp)
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>stacktree: stack is empty" + c.ennd)
+    else
+        treePath = "/"
+        storeKey = null
+        if inp.len >= 2 and inp[-1][0:1] == "@" then
+            storeKey = inp[-1][1:]
+            if inp.len >= 3 then treePath = inp[1:-1].join(" ") else treePath = "/"
+        else if inp.len >= 2 then
+            treePath = inp[1]
+        end if
+        gcoT = get_custom_object
+        gcoT.treeResults = []
+        i = 1
+        for obj in objectStack
+            if typeof(obj) != "shell" and typeof(obj) != "computer" then
+                i = i + 1
+                continue
+            end if
+            comp = obj
+            if typeof(obj) == "shell" then comp = obj.host_computer
+            print(c.cyan + "<b>[" + i + "] " + comp.public_ip + c.ennd + c.grey + "  lan:" + comp.local_ip + c.ennd)
+            lanIp4 = comp.local_ip
+            queue4 = [treePath]
+            while queue4.len > 0
+                p4 = queue4.pull
+                f4 = comp.File(p4)
+                if not f4 then continue
+                if f4.is_folder then
+                    print(c.cyan + "  " + f4.path + "/" + c.ennd)
+                    for sub4 in f4.get_folders
+                        queue4.push(sub4.path)
+                    end for
+                    for fl4 in f4.get_files
+                        entry4 = lanIp4 + " | " + fl4.path
+                        print(c.white + "  " + fl4.path + c.ennd)
+                        gcoT.treeResults.push(entry4)
+                    end for
+                else
+                    entry4 = lanIp4 + " | " + f4.path
+                    print(c.white + "  " + f4.path + c.ennd)
+                    gcoT.treeResults.push(entry4)
+                end if
+            end while
+            i = i + 1
+        end for
+        div
+        joined4 = gcoT.treeResults.join(",")
+        globals.pipeResult = joined4
+        print(c.cyan + "stacktree: " + gcoT.treeResults.len + " file(s) across " + objectStack.len + " object(s)" + c.ennd)
+        if storeKey != null then
+            gco = get_custom_object
+            if not gco.hasIndex("clips") then gco.clips = {}
+            gco.clips[storeKey] = joined4
+            globals.pipeVars[storeKey] = joined4
+            print(c.lime + "  @" + storeKey + " = " + gcoT.treeResults.len + " entries" + c.ennd)
+        end if
+    end if
+end function
+
+// ── stacklog ─────────────────────────────────────────────────────
+CmdStacklog = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: stacklog <filepath>")
+        print(c.grey + "  e.g.  stacklog /root/ai/harvest_log.txt" + c.ennd)
+    else if objectStack.len == 0 then
+        print(c.yellow + "<b>stacklog: stack is empty" + c.ennd)
+    else
+        logPath = inp[1]
+        parts2 = logPath.split("/")
+        fileName = parts2[-1]
+        folder = logPath[:logPath.len - fileName.len - 1]
+        if folder == "" then folder = "/"
+        logFile = myComp.File(logPath)
+        if not logFile then
+            myComp.touch(folder, fileName)
+            logFile = myComp.File(logPath)
+        end if
+        if not logFile then
+            print(c.yellow + "<b>stacklog: could not create " + logPath + c.ennd)
+        else
+            existing = logFile.get_content
+            if not existing or existing == null then existing = ""
+            logLines = ""
+            totalCreds = 0
+            i = 1
+            for obj in objectStack
+                comp2 = null
+                if typeof(obj) == "shell" then
+                    comp2 = obj.host_computer
+                    rootStr = "guest"
+                    if IsRoot(obj) then rootStr = "root"
+                    logLines = logLines + "[" + i + "] " + rootStr + " shell  pub:" + comp2.public_ip + "  lan:" + comp2.local_ip + char(10)
+                else if typeof(obj) == "computer" then
+                    comp2 = obj
+                    rootStr = "guest"
+                    if IsRoot(obj) then rootStr = "root"
+                    logLines = logLines + "[" + i + "] " + rootStr + " computer  pub:" + obj.public_ip + "  lan:" + obj.local_ip + char(10)
+                end if
+                if comp2 != null then
+                    homeDir2 = comp2.File("/home")
+                    if homeDir2 then
+                        for user2 in homeDir2.get_folders
+                            for target2 in ["Mail.txt", "Bank.txt"]
+                                hf2 = comp2.File("/home/" + user2.name + "/Config/" + target2)
+                                if not hf2 then continue
+                                if not hf2.has_permission("r") then continue
+                                content2 = hf2.get_content
+                                if not content2 or content2 == "" then continue
+                                logLines = logLines + "  " + user2.name + "/" + target2 + char(10)
+                                for hline2 in content2.split(char(10))
+                                    if hline2 == "" then continue
+                                    hparts2 = hline2.split(":")
+                                    if hparts2.len < 2 then continue
+                                    pw2 = CrackHash(hparts2[1])
+                                    if pw2 then
+                                        logLines = logLines + "    " + hparts2[0] + " : " + pw2 + char(10)
+                                        totalCreds = totalCreds + 1
+                                        print(c.lime + "  " + hparts2[0] + c.ennd + c.grey + " : " + c.gold + "<b>" + pw2 + c.ennd)
+                                    end if
+                                end for
+                            end for
+                        end for
+                    end if
+                end if
+                logLines = logLines + char(10)
+                i = i + 1
+            end for
+            logFile.set_content(existing + logLines)
+            print(c.lime + "  logged " + objectStack.len + " object(s) + " + totalCreds + " credential(s) to " + logPath + c.ennd)
+        end if
+    end if
+end function
+
+// ── autoharvest ──────────────────────────────────────────────────
+CmdAutoharvest = function(inp)
+    if inp.len == 3 then
+        AutoHarvest(inp[1].to_int, inp[2].to_int)
+    else if inp.len == 2 then
+        AutoHarvest(inp[1].to_int, 5)
+    else
+        AutoHarvest(1, 5)
+    end if
+end function
+
+// ── harvestgrep ──────────────────────────────────────────────────
+CmdHarvestgrep = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: harvestgrep <pattern> [@var]")
+        print(c.grey + "  searches results stored by stackrun harvest" + c.ennd)
+    else
+        gcoH = get_custom_object
+        if not gcoH.hasIndex("harvestResults") or gcoH.harvestResults.len == 0 then
+            print(c.yellow + "<b>harvestgrep: no harvest results — run stackrun harvest first" + c.ennd)
+            globals.pipeFailed = true
+        else
+            pattern2 = inp[1]
+            matches2 = []
+            for r in gcoH.harvestResults
+                if r.indexOf(pattern2) != null then
+                    print(c.lime + "  " + r + c.ennd)
+                    matches2.push(r)
+                end if
+            end for
+            if matches2.len == 0 then
+                print(c.yellow + "<b>harvestgrep: no matches for '" + pattern2 + "'" + c.ennd)
+                globals.pipeFailed = true
+            else
+                print(c.cyan + "harvestgrep: " + matches2.len + " match(es)" + c.ennd)
+                joined2 = matches2.join(",")
+                globals.pipeResult = joined2
+                if inp.len >= 3 then
+                    k2 = inp[2]
+                    if k2[0:1] == "@" then k2 = k2[1:]
+                    gco = get_custom_object
+                    if not gco.hasIndex("clips") then gco.clips = {}
+                    gco.clips[k2] = joined2
+                    globals.pipeVars[k2] = joined2
+                    print(c.lime + "  @" + k2 + " = " + joined2 + c.ennd)
+                end if
+            end if
+        end if
+    end if
+end function
+
+// ── psgrep ───────────────────────────────────────────────────────
+CmdPsgrep = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: psgrep <pattern> [@var]")
+        print(c.grey + "  searches processes from stackrun ps" + c.ennd)
+    else
+        gcoP = get_custom_object
+        if not gcoP.hasIndex("psResults") or gcoP.psResults.len == 0 then
+            print(c.yellow + "<b>psgrep: no ps results — run stackrun ps first" + c.ennd)
+            globals.pipeFailed = true
+        else
+            pattern4 = inp[1]
+            matches4 = []
+            for r in gcoP.psResults
+                if r.indexOf(pattern4) != null then
+                    print(c.lime + "  " + r + c.ennd)
+                    matches4.push(r)
+                end if
+            end for
+            if matches4.len == 0 then
+                print(c.yellow + "<b>psgrep: no matches for '" + pattern4 + "'" + c.ennd)
+                globals.pipeFailed = true
+            else
+                print(c.cyan + "psgrep: " + matches4.len + " match(es)" + c.ennd)
+                joined4 = matches4.join(",")
+                globals.pipeResult = joined4
+                if inp.len >= 3 then
+                    k4 = inp[2]
+                    if k4[0:1] == "@" then k4 = k4[1:]
+                    gco = get_custom_object
+                    if not gco.hasIndex("clips") then gco.clips = {}
+                    gco.clips[k4] = joined4
+                    globals.pipeVars[k4] = joined4
+                    print(c.lime + "  @" + k4 + " = " + joined4 + c.ennd)
+                end if
+            end if
+        end if
+    end if
+end function
+
+// ── treegrep ─────────────────────────────────────────────────────
+CmdTreegrep = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: treegrep <pattern> [@var]")
+        print(c.grey + "  searches results stored by stacktree" + c.ennd)
+    else
+        gcoT = get_custom_object
+        if not gcoT.hasIndex("treeResults") or gcoT.treeResults.len == 0 then
+            print(c.yellow + "<b>treegrep: no tree results — run stacktree first" + c.ennd)
+            globals.pipeFailed = true
+        else
+            pattern3 = inp[1]
+            matches3 = []
+            for r in gcoT.treeResults
+                if r.indexOf(pattern3) != null then
+                    print(c.lime + "  " + r + c.ennd)
+                    matches3.push(r)
+                end if
+            end for
+            if matches3.len == 0 then
+                print(c.yellow + "<b>treegrep: no matches for '" + pattern3 + "'" + c.ennd)
+                globals.pipeFailed = true
+            else
+                print(c.cyan + "treegrep: " + matches3.len + " match(es)" + c.ennd)
+                joined3 = matches3.join(",")
+                globals.pipeResult = joined3
+                if inp.len >= 3 then
+                    k3 = inp[2]
+                    if k3[0:1] == "@" then k3 = k3[1:]
+                    gco = get_custom_object
+                    if not gco.hasIndex("clips") then gco.clips = {}
+                    gco.clips[k3] = joined3
+                    globals.pipeVars[k3] = joined3
+                    print(c.lime + "  @" + k3 + " = " + joined3 + c.ennd)
+                end if
+            end if
+        end if
+    end if
+end function
