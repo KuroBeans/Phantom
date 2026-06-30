@@ -51,6 +51,7 @@ CommandTable["hacklan"]     = @CmdHacklan
 // ---- BATCH 2d: hack.src -----------------------------------------
 CommandTable["wstack"]  = @CmdWstack
 CommandTable["cascade"] = @CmdCascade
+CommandTable["qg"]      = @CmdQg
 
 // ---- BATCH 2e: remote.src ---------------------------------------
 CommandTable["term"]      = @CmdTerm
@@ -167,8 +168,3 @@ CommandTable["sleep"]    = @CmdSleep
 CommandTable["pause"]    = @CmdPause
 CommandTable["_throw"]   = @CmdThrow
 CommandTable["_return"]  = @CmdReturn
-
-// ---- "./" and "r./" are NOT in this table ---------------------------
-// They're prefix matches (cmd[:2]=="./" or cmd[:3]=="r./"), not exact
-// keys, so phantom.src's dispatcher must check those BEFORE doing
-// CommandTable.hasIndex(cmd) — same as it special-cased them before.
