@@ -1,0 +1,285 @@
+// ================================================================
+//  vars.src  |  phantom module  |  variables, clips, aliases
+// ================================================================
+
+// ── clip ─────────────────────────────────────────────────────────
+CmdClip = function(inp)
+    gco = get_custom_object
+    if not gco.hasIndex("clips") then gco.clips = {}
+    if inp.len == 1 then
+        if gco.clips.len == 0 then
+            print(c.grey + "no clips stored" + c.ennd)
+        else
+            for k in gco.clips.indexes
+                print(c.gold + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + gco.clips[k] + c.ennd)
+            end for
+        end if
+    else if inp[1] == "-d" or inp[1] == "-c" then
+        if inp.len < 3 then
+            if inp[1] == "-c" then
+                count = gco.clips.len
+                gco.clips = {}
+                for k in pipeVars.indexes
+                    pipeVars.remove(k)
+                end for
+                print(c.grey + "  cleared " + count + " clip(s)" + c.ennd)
+            else
+                print(c.yellow + "<b>clip -d: missing name (e.g. clip -d @a)" + c.ennd)
+            end if
+        else
+            k = inp[2]
+            if k[0:1] == "@" then k = k[1:]
+            if gco.clips.hasIndex(k) then
+                gco.clips.remove(k)
+                if pipeVars.hasIndex(k) then pipeVars.remove(k)
+                print(c.grey + "  cleared @" + k + c.ennd)
+            else
+                print(c.yellow + "  @" + k + " not found" + c.ennd)
+            end if
+        end if
+    else
+        k = inp[1]
+        if k[0:1] == "@" then k = k[1:]
+
+        // Remove any comma-separated values that snuck into k (from variable substitution)
+        if k.indexOf(",") != null then
+            k = k.split(",")[0]
+        end if
+
+        // Check for += (accumulation mode)
+        if inp.len >= 3 and inp[2] == "+=" then
+            val = inp[3:].join(" ")
+            if val == "" or val == "+=" then val = pipeResult
+
+            if gco.clips.hasIndex(k) and gco.clips[k] != "" then
+                existing = gco.clips[k]
+                items = existing.split(",")
+                if items.indexOf(val) == null then
+                    val = existing + "," + val
+                else
+                    val = existing
+                end if
+            end if
+            gco.clips[k] = val
+            pipeVars[k] = val
+            globals.pipeResult = val
+            print(c.lime + "  @" + k + " += " + val + c.ennd)
+        else if inp.len < 3 then
+            if pipeResult != "" then
+                val = pipeResult
+                gco.clips[k] = val
+                pipeVars[k] = val
+                globals.pipeResult = ""
+                print(c.lime + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + val + c.ennd)
+            else if gco.clips.hasIndex(k) then
+                print(c.gold + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + gco.clips[k] + c.ennd)
+            else
+                print(c.yellow + "  @" + k + " not set  (usage: clip @" + k + " <value>)" + c.ennd)
+            end if
+        else
+            val = inp[2:].join(" ")
+            if val == "stack" or val == "stack.len" then val = "" + objectStack.len
+            if gco.clips.hasIndex(k) and gco.clips[k] != "" then
+                val = gco.clips[k] + "," + val
+            end if
+            gco.clips[k] = val
+            pipeVars[k] = val
+            print(c.lime + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + val + c.ennd)
+        end if
+    end if
+end function
+
+// ── inc ──────────────────────────────────────────────────────────
+CmdInc = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: inc @var [amount]")
+    else
+        k = inp[1]
+        if k[0:1] == "@" then k = k[1:]
+        amount = 1
+        if inp.len >= 3 then amount = inp[2].to_int
+        gco = get_custom_object
+        if not gco.hasIndex("clips") then gco.clips = {}
+        cur = 0
+        if gco.clips.hasIndex(k) and gco.clips[k] != "" then cur = gco.clips[k].to_int
+        cur = cur + amount
+        val = "" + cur
+        gco.clips[k] = val
+        pipeVars[k] = val
+        globals.pipeResult = val
+        print(c.grey + "  @" + k + " = " + val + c.ennd)
+    end if
+end function
+
+// ── dec ──────────────────────────────────────────────────────────
+CmdDec = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: dec @var [amount]")
+    else
+        k = inp[1]
+        if k[0:1] == "@" then k = k[1:]
+        amount = 1
+        if inp.len >= 3 then amount = inp[2].to_int
+        gco = get_custom_object
+        if not gco.hasIndex("clips") then gco.clips = {}
+        cur = 0
+        if gco.clips.hasIndex(k) and gco.clips[k] != "" then cur = gco.clips[k].to_int
+        cur = cur - amount
+        val = "" + cur
+        gco.clips[k] = val
+        pipeVars[k] = val
+        globals.pipeResult = val
+        print(c.grey + "  @" + k + " = " + val + c.ennd)
+    end if
+end function
+
+// ── math ─────────────────────────────────────────────────────────
+CmdMath = function(inp)
+    if inp.len < 5 then
+        print("<b>Usage: math @result @a +|-|*|/ @b")
+        print(c.grey + "  e.g.  math @result @count + 1" + c.ennd)
+        print(c.grey + "  e.g.  math @remaining @goal - @found" + c.ennd)
+    else
+        k = inp[1]
+        if k[0:1] == "@" then k = k[1:]
+        leftTok2 = inp[2]
+        if leftTok2[0:1] == "@" then
+            vn2 = leftTok2[1:]
+            if pipeVars.hasIndex(vn2) then leftTok2 = pipeVars[vn2]
+        end if
+        op2 = inp[3]
+        rightTok2 = inp[4]
+        if rightTok2[0:1] == "@" then
+            vn2 = rightTok2[1:]
+            if pipeVars.hasIndex(vn2) then rightTok2 = pipeVars[vn2]
+        end if
+        lv2 = leftTok2.to_int
+        rv2 = rightTok2.to_int
+        result2 = 0
+        if op2 == "+" then
+            result2 = lv2 + rv2
+        else if op2 == "-" then
+            result2 = lv2 - rv2
+        else if op2 == "*" then
+            result2 = lv2 * rv2
+        else if op2 == "/" then
+            if rv2 == 0 then
+                print(c.yellow + "<b>math: division by zero" + c.ennd)
+                globals.pipeFailed = true
+            else
+                result2 = floor(lv2 / rv2)
+            end if
+        else
+            print(c.yellow + "<b>math: unknown operator '" + op2 + "' — use + - * /" + c.ennd)
+            globals.pipeFailed = true
+        end if
+        if not pipeFailed then
+            val2 = "" + result2
+            gco = get_custom_object
+            if not gco.hasIndex("clips") then gco.clips = {}
+            gco.clips[k] = val2
+            pipeVars[k] = val2
+            globals.pipeResult = val2
+            print(c.grey + "  @" + k + " = " + val2 + c.ennd)
+        end if
+    end if
+end function
+
+// ── alias ────────────────────────────────────────────────────────
+CmdAlias = function(inp)
+    gco = get_custom_object
+    if not gco.hasIndex("aliases") then gco.aliases = {}
+    if inp.len == 1 then
+        if aliases.len == 0 then
+            print(c.grey + "no aliases defined" + c.ennd)
+        else
+            print(c.cyan + "<b>aliases:" + c.ennd)
+            for k in aliases.indexes
+                print(c.gold + "  " + k + c.ennd + c.grey + " = " + c.ennd + c.white + aliases[k] + c.ennd)
+            end for
+        end if
+    else if inp[1] == "-d" then
+        if inp.len < 3 then
+            print(c.yellow + "<b>usage: alias -d <name>" + c.ennd)
+        else
+            k = inp[2]
+            if aliases.hasIndex(k) then
+                aliases.remove(k)
+                gco.aliases.remove(k)
+                print(c.grey + "  alias '" + k + "' removed" + c.ennd)
+            else
+                print(c.yellow + "  alias '" + k + "' not found" + c.ennd)
+            end if
+        end if
+    else if inp.len < 3 then
+        print(c.yellow + "<b>usage: alias <name> <command...>" + c.ennd)
+        print(c.grey + "  e.g.  alias gs grab @t 80 -push" + c.ennd)
+    else
+        k = inp[1]
+        val = inp[2:].join(" ")
+        globals.aliases[k] = val
+        gco.aliases[k] = val
+        print(c.lime + "  alias '" + k + "' = " + val + c.ennd)
+    end if
+end function
+
+// ── ask ──────────────────────────────────────────────────────────
+CmdAsk = function(inp)
+    if inp.len < 2 then
+        print(c.yellow + "<b>usage: ask @var [prompt]" + c.ennd)
+    else
+        k = inp[1]
+        if k[0:1] == "@" then k = k[1:]
+        prompt = ""
+        if inp.len >= 3 then prompt = inp[2:].join(" ")
+        val = user_input(c.gold + prompt + c.ennd, false, false)
+        if val != "" then
+            gco = get_custom_object
+            if not gco.hasIndex("clips") then gco.clips = {}
+            gco.clips[k] = val
+            pipeVars[k] = val
+            globals.pipeResult = val
+            print(c.lime + "  @" + k + " = " + val + c.ennd)
+        else
+            print(c.grey + "  @" + k + " unchanged (empty input)" + c.ennd)
+        end if
+    end if
+end function
+
+// ── echo ─────────────────────────────────────────────────────────
+CmdEcho = function(inp)
+    if inp.len == 1 then
+        print("")
+    else
+        print(c.white + inp[1:].join(" ") + c.ennd)
+    end if
+end function
+
+// ── log ──────────────────────────────────────────────────────────
+CmdLog = function(inp)
+    if inp.len < 3 then
+        print("<b>Usage: log <filepath> <message...>")
+        print(c.grey + "  e.g.  log /root/ai/creds.txt @a:@port" + c.ennd)
+    else
+        logPath = inp[1]
+        msg = inp[2:].join(" ")
+        parts2 = logPath.split("/")
+        fileName = parts2[-1]
+        folder = logPath[:logPath.len - fileName.len - 1]
+        if folder == "" then folder = "/"
+        logFile = myComp.File(logPath)
+        if not logFile then
+            myComp.touch(folder, fileName)
+            logFile = myComp.File(logPath)
+        end if
+        if not logFile then
+            print(c.yellow + "<b>log: could not create " + logPath + c.ennd)
+            globals.pipeFailed = true
+        else
+            existing = logFile.get_content
+            if not existing or existing == null then existing = ""
+            logFile.set_content(existing + msg + char(10))
+            print(c.grey + "  logged: " + msg + c.ennd)
+        end if
+    end if
+end function
