@@ -1,0 +1,901 @@
+// ================================================================
+// PHANTOM MACRO SYSTEM - macro.src
+// ================================================================
+
+// ── EvalCondition ────────────────────────────────────────────────
+EvalCondition = function(tokens)
+    if tokens.len == 0 then return false
+
+    // ── and / or splitting (left-to-right, 'or' lower precedence) ─
+    orIdx = null
+    andIdx = null
+    i = 0
+    while i < tokens.len
+        if tokens[i] == "or"  then orIdx  = i
+        if tokens[i] == "and" then andIdx = i
+        i = i + 1
+    end while
+    if orIdx != null then
+        return EvalCondition(tokens[:orIdx]) or EvalCondition(tokens[orIdx+1:])
+    end if
+    if andIdx != null then
+        return EvalCondition(tokens[:andIdx]) and EvalCondition(tokens[andIdx+1:])
+    end if
+
+    resolve = function(t)
+        if t == "null" then return ""
+        if t.len > 1 and t[0:1] == "@" then
+            vn = t[1:]
+            if pipeVars.hasIndex(vn) then return pipeVars[vn]
+            gcoC = get_custom_object
+            if gcoC.hasIndex("clips") and gcoC.clips.hasIndex(vn) then return gcoC.clips[vn]
+            return ""
+        end if
+        return t
+    end function
+
+    negCmp = false
+    cmpTokens = tokens
+    if tokens.len > 0 and (tokens[0] == "not" or tokens[0] == "no") then
+        negCmp = true
+        cmpTokens = tokens[1:]
+    end if
+    opIdx = null
+    opStr = null
+    ops = ["<=", ">=", "!=", "==", "<", ">"]
+    for op in ops
+        idx = cmpTokens.indexOf(op)
+        if idx != null then
+            opIdx = idx
+            opStr = op
+        end if
+        if opIdx != null then break
+    end for
+    if opIdx != null then
+        leftTok  = cmpTokens[:opIdx].join(" ")
+        rightTok = cmpTokens[opIdx+1:].join(" ")
+        typeResult = null
+        if leftTok == "stack" then
+            lv = objectStack.len
+            rv = rightTok.to_int
+            if opStr == "==" then typeResult = lv == rv
+            if opStr == "!=" then typeResult = lv != rv
+            if opStr == "<"  then typeResult = lv < rv
+            if opStr == ">"  then typeResult = lv > rv
+            if opStr == "<=" then typeResult = lv <= rv
+            if opStr == ">=" then typeResult = lv >= rv
+        else if leftTok == "shell" or leftTok == "object" or leftTok == "computer" then
+            objType = typeof(globals.object)
+            if rightTok == "root"     then typeResult = (objType == "shell" or objType == "computer") and IsRoot(globals.object)
+            if rightTok == "guest"    then typeResult = (objType == "shell" or objType == "computer") and not IsRoot(globals.object)
+            if rightTok == "shell"    then typeResult = objType == "shell"
+            if rightTok == "computer" then typeResult = objType == "computer"
+            if rightTok == "file"     then typeResult = objType == "file"
+            if rightTok == "null"     then typeResult = globals.object == null
+            if typeResult != null and opStr == "!=" then typeResult = not typeResult
+        end if
+        if typeResult != null then
+            if negCmp then typeResult = not typeResult
+            return typeResult
+        end if
+        leftVal  = resolve(leftTok)
+        rightVal = resolve(rightTok)
+        result = false
+        if opStr == "==" then result = leftVal == rightVal
+        if opStr == "!=" then result = leftVal != rightVal
+        if opStr == "<"  then result = leftVal.to_int < rightVal.to_int
+        if opStr == ">"  then result = leftVal.to_int > rightVal.to_int
+        if opStr == "<=" then result = leftVal.to_int <= rightVal.to_int
+        if opStr == ">=" then result = leftVal.to_int >= rightVal.to_int
+        if negCmp then result = not result
+        return result
+    end if
+
+    neg = false
+    i = 0
+    if tokens[0] == "not" or tokens[0] == "no" then
+        neg = true
+        i = 1
+    end if
+    if i >= tokens.len then return neg
+
+    cond = tokens[i]
+    result = false
+
+    if cond == "root"     then result = globals.object != null and typeof(globals.object) == "shell" and IsRoot(globals.object)
+    if cond == "guest"    then result = globals.object != null and typeof(globals.object) == "shell" and not IsRoot(globals.object)
+    if cond == "shell"    then result = typeof(globals.object) == "shell"
+    if cond == "computer" then result = typeof(globals.object) == "computer"
+    if cond == "object"   then result = globals.object != null
+    if cond == "stack"    then result = objectStack.len > 0
+    if cond == "failed" or cond == "pipefailed" then result = pipeFailed
+    if cond == "true" or cond == "__true__" then result = true
+    if cond == "false"    then result = false
+    if cond == "target" or cond == "pt" then result = publicTarget != ""
+    if cond == "clip"     then result = false
+    if cond.len > 1 and cond[0:1] == "@" then
+        vn = cond[1:]
+        gcoC = get_custom_object
+        if pipeVars.hasIndex(vn) and pipeVars[vn] != "" then
+            result = true
+        else if gcoC.hasIndex("clips") and gcoC.clips.hasIndex(vn) and gcoC.clips[vn] != "" then
+            result = true
+        end if
+    end if
+
+    if neg then return not result
+    return result
+end function
+
+// ── MacroCall ─────────────────────────────────────────────────────
+MacroCall = function(name, args)
+    if typeof(name) != "string" then return null
+    gco = get_custom_object
+    if not gco.hasIndex("macroCallStack") then gco.macroCallStack = []
+    if gco.macroCallStack.len > 20 then
+        print(c.red + "  [ERROR] macro call depth exceeded" + c.ennd)
+        return null
+    end if
+    gco.macroCallStack.push({"name": name, "args": args})
+
+    // check inline funcs first
+    if gco.hasIndex("macroFuncs") and gco.macroFuncs.hasIndex(name) then
+        fn = gco.macroFuncs[name]
+        compiled = CompileMacroLines(fn["rawLines"], args, false)
+        for ln in compiled
+            globals.macroQueue.push(ln)
+        end for
+        globals.macroQueue.push("__funcend__")
+        gco.macroCallStack.pop
+        return pipeResult
+    end if
+
+    macDir = "/root/ai/mac"
+    f = myComp.File(macDir + "/" + name + ".txt")
+    if not f then f = myComp.File(macDir + "/" + name)
+    if not f then
+        print(c.yellow + "  macro '" + name + "' not found" + c.ennd)
+        gco.macroCallStack.pop
+        return null
+    end if
+    lines = f.get_content.split(char(10))
+    compiled = CompileMacroLines(lines, args, false)
+    for ln in compiled
+        globals.macroQueue.push(ln)
+    end for
+    globals.macroQueue.push("__funcend__")
+    gco.macroCallStack.pop
+    return pipeResult
+end function
+
+// ── MacroRef ──────────────────────────────────────────────────────
+MacroRef = function
+    print(char(10) + c.cyan + "<b>PHANTOM MACRO SYSTEM" + c.ennd)
+    print(c.grey + "================================================================" + c.ennd)
+    print(char(10) + c.gold + "<b>BASICS" + c.ennd)
+    print(c.white + "  mac <name> [args]          Run macro from /root/ai/mac/" + c.ennd)
+    print(c.white + "  mac list / show <name>     List or preview macros" + c.ennd)
+    print(char(10) + c.gold + "<b>VARIABLES" + c.ennd)
+    print(c.white + "  clip @var value            Set variable" + c.ennd)
+    print(c.white + "  @var                       Expand variable in command" + c.ennd)
+    print(c.white + "  $1 $2 ... $9               Macro arguments" + c.ennd)
+    print(char(10) + c.gold + "<b>FLOW" + c.ennd)
+    print(c.white + "  cmd1 | cmd2                Pipe (stop on fail)" + c.ennd)
+    print(c.white + "  cmd1 && cmd2               AND (stop on fail, same as pipe)" + c.ennd)
+    print(c.white + "  cmd1 ; cmd2                Always run both" + c.ennd)
+    print(char(10) + c.gold + "<b>CONDITIONALS" + c.ennd)
+    print(c.white + "  if <cond>                  Block conditional (use endif)" + c.ennd)
+    print(c.white + "  elif <cond> / else / endif" + c.ennd)
+    print(c.white + "  if <cond> then <cmd>       One-liner at prompt" + c.ennd)
+    print(c.grey + "    Conds: root shell object stack target @var failed" + c.ennd)
+    print(c.grey + "    Ops:   == != < > <= >= and or not" + c.ennd)
+    print(char(10) + c.gold + "<b>LOOPS" + c.ennd)
+    print(c.white + "  while <cond> [max N]       Loop while condition" + c.ennd)
+    print(c.white + "  until <cond> [max N]       Loop until condition" + c.ennd)
+    print(c.white + "  repeat N                   Repeat N times" + c.ennd)
+    print(c.white + "  for @var in @list          Iterate comma-list" + c.ennd)
+    print(c.white + "  for @var in range(N,M)     Iterate N..M" + c.ennd)
+    print(c.white + "  endfor / endwhile / enduntil / endrepeat" + c.ennd)
+    print(c.white + "  break / continue" + c.ennd)
+    print(char(10) + c.gold + "<b>SWITCH" + c.ennd)
+    print(c.white + "  switch @var                Dispatch on value" + c.ennd)
+    print(c.white + "  case <val> / default / endswitch" + c.ennd)
+    print(char(10) + c.gold + "<b>ERROR HANDLING" + c.ennd)
+    print(c.white + "  try / catch [@err] / endtry" + c.ennd)
+    print(c.white + "  _throw <message>           Throw error to catch" + c.ennd)
+    print(char(10) + c.gold + "<b>FUNCTIONS" + c.ennd)
+    print(c.white + "  func <name>([p1,p2,...])   Define inline function" + c.ennd)
+    print(c.white + "  endfunc / _return <value>" + c.ennd)
+    print(c.white + "  call <name> [args]         Call macro or func" + c.ennd)
+    print(char(10) + c.gold + "<b>MENUS" + c.ennd)
+    print(c.white + "  menu <title>               Interactive choice menu" + c.ennd)
+    print(c.white + "  <label> | <command>        Menu item" + c.ennd)
+    print(c.white + "  endmenu" + c.ennd)
+    print(char(10) + c.gold + "<b>MISC" + c.ennd)
+    print(c.white + "  sleep N                    Wait N seconds" + c.ennd)
+    print(c.white + "  pause                      Wait for Enter" + c.ennd)
+    print(c.grey + "================================================================" + c.ennd)
+end function
+
+// ── CompileMacroLines ────────────────────────────────────────────
+// Compiles raw macro text into encoded macroQueue-ready tokens.
+// Separators:  char(1)=field  char(2)=bodyLine  char(3)=menuItem
+//              char(4)=branch/case  char(5)=listItem
+CompileMacroLines = function(lines, argList, warnUnresolved)
+    if warnUnresolved == null then warnUnresolved = false
+    dollarN = ["$1","$2","$3","$4","$5","$6","$7","$8","$9"]
+    processedLines = []
+
+    // separate stacks per block type
+    ifStack     = []
+    loopStack   = []   // while/until/repeat
+    forStack    = []   // for..in..endfor
+    tryStack    = []
+    switchStack = []
+    funcStack   = []
+    menuStack   = []
+
+    // blockTypeOrder: tracks nesting so pushLineSingle knows where to push
+    blockTypeOrder = []
+
+    pushLineSingle = function(ln)
+        if blockTypeOrder.len == 0 then
+            processedLines.push(ln)
+            return
+        end if
+        top = blockTypeOrder[blockTypeOrder.len - 1]
+        if top == "if" then
+            frame = ifStack[ifStack.len - 1]
+            if frame["inElse"] then
+                frame["elseBody"].push(ln)
+            else
+                frame["branches"][frame["branches"].len - 1]["body"].push(ln)
+            end if
+        else if top == "loop" then
+            loopStack[loopStack.len - 1]["body"].push(ln)
+        else if top == "for" then
+            forStack[forStack.len - 1]["body"].push(ln)
+        else if top == "try" then
+            frame = tryStack[tryStack.len - 1]
+            if frame["inCatch"] then
+                frame["catchBody"].push(ln)
+            else
+                frame["tryBody"].push(ln)
+            end if
+        else if top == "switch" then
+            frame = switchStack[switchStack.len - 1]
+            if frame["inDefault"] then
+                frame["defaultBody"].push(ln)
+            else if frame["cases"].len > 0 then
+                frame["cases"][frame["cases"].len - 1]["body"].push(ln)
+            end if
+        else if top == "func" then
+            funcStack[funcStack.len - 1]["rawLines"].push(ln)
+        else if top == "menu" then
+            pipePos = ln.indexOf("|")
+            if pipePos != null then
+                lbl = ln[:pipePos]
+                while lbl.len > 0 and lbl[-1] == " "
+                    lbl = lbl[:-1]
+                end while
+                cmd = ln[pipePos+1:]
+                while cmd.len > 0 and cmd[0] == " "
+                    cmd = cmd[1:]
+                end while
+                menuStack[menuStack.len - 1]["items"].push(lbl + char(3) + cmd)
+            end if
+        end if
+    end function
+
+    // handle ; and && separators then pushLineSingle each part
+    pushLine = function(ln)
+        if ln.indexOf(" ; ") != null then
+            segs = ln.split(" ; ")
+            i = 0
+            while i < segs.len
+                if segs[i] != "" then pushLineSingle(segs[i])
+                if i < segs.len - 1 then pushLineSingle("__clearfail__")
+                i = i + 1
+            end while
+            return
+        end if
+        if ln.indexOf(" && ") != null then
+            segs = ln.split(" && ")
+            for seg in segs
+                if seg != "" then pushLineSingle(seg)
+            end for
+            return
+        end if
+        pushLineSingle(ln)
+    end function
+
+    for line in lines
+        line = line.split(char(9)).join(" ")
+        line = line.split(char(13)).join("")
+        parts = []
+        for p in line.split(" ")
+            if p != "" then parts.push(p)
+        end for
+        if parts.len == 0 or parts[0][0:2] == "//" then continue
+
+        // $N substitution
+        j = 0
+        while j < argList.len and j < dollarN.len
+            pat = dollarN[j]
+            val = argList[j]
+            pos = line.indexOf(pat)
+            while pos != null
+                line = line[:pos] + val + line[pos + 2:]
+                pos = line.indexOf(pat)
+            end while
+            j = j + 1
+        end while
+        if warnUnresolved then
+            j = argList.len
+            while j < dollarN.len
+                pat = dollarN[j]
+                if line.indexOf(pat) != null then
+                    print(c.yellow + "  warning: " + pat + " used but not passed" + c.ennd)
+                    pos = line.indexOf(pat)
+                    while pos != null
+                        line = line[:pos] + line[pos + 2:]
+                        pos = line.indexOf(pat)
+                    end while
+                end if
+                j = j + 1
+            end while
+        end if
+
+        // re-parse parts after substitution
+        parts = []
+        for p in line.split(" ")
+            if p != "" then parts.push(p)
+        end for
+        if parts.len == 0 then continue
+        kw = parts[0]
+
+        // ── func short-circuit: store raw lines ───────────────────
+        if blockTypeOrder.len > 0 and blockTypeOrder[blockTypeOrder.len - 1] == "func" then
+            if kw == "endfunc" then
+                frame = funcStack.pop
+                blockTypeOrder.pop
+                gcoF = get_custom_object
+                if not gcoF.hasIndex("macroFuncs") then gcoF.macroFuncs = {}
+                gcoF.macroFuncs[frame["name"]] = {"params": frame["params"], "rawLines": frame["rawLines"]}
+                print(c.grey + "  func '" + frame["name"] + "' defined" + c.ennd)
+            else
+                funcStack[funcStack.len - 1]["rawLines"].push(line)
+            end if
+            continue
+        end if
+
+        // ── menu short-circuit ────────────────────────────────────
+        if blockTypeOrder.len > 0 and blockTypeOrder[blockTypeOrder.len - 1] == "menu" then
+            if kw == "endmenu" then
+                frame = menuStack.pop
+                blockTypeOrder.pop
+                enc = "__menu__" + char(1) + frame["title"] + char(1) + frame["items"].join(char(2))
+                pushLine(enc)
+            else
+                pipePos = line.indexOf("|")
+                if pipePos != null then
+                    lbl = line[:pipePos]
+                    while lbl.len > 0 and lbl[-1] == " "
+                    lbl = lbl[:-1]
+                end while
+                    cmd = line[pipePos+1:]
+                    while cmd.len > 0 and cmd[0] == " "
+                    cmd = cmd[1:]
+                end while
+                    menuStack[menuStack.len - 1]["items"].push(lbl + char(3) + cmd)
+                end if
+            end if
+            continue
+        end if
+
+        // ── keyword dispatch ──────────────────────────────────────
+
+        if kw == "func" then
+            funcDef = parts[1:].join(" ")
+            parenIdx = funcDef.indexOf("(")
+            params = []
+            if parenIdx != null then
+                funcName = funcDef[:parenIdx]
+                closeIdx = funcDef.indexOf(")")
+                paramStr = ""
+                if closeIdx != null then paramStr = funcDef[parenIdx+1:closeIdx]
+                if paramStr != "" then
+                    for p in paramStr.split(",")
+                        t = p
+                        while t.len > 0 and t[0] == " "
+                        t = t[1:]
+                        end while
+                        while t.len > 0 and t[-1] == " "
+                        t = t[:-1]
+                        end while
+                        if t != "" then params.push(t)
+                    end for
+                end if
+            else
+                funcName = parts[1]
+            end if
+            funcStack.push({"name": funcName, "params": params, "rawLines": []})
+            blockTypeOrder.push("func")
+
+        else if kw == "try" then
+            tryStack.push({"tryBody": [], "catchVar": "", "catchBody": [], "inCatch": false})
+            blockTypeOrder.push("try")
+
+        else if kw == "catch" then
+            if tryStack.len == 0 then
+                print(c.yellow + "  warning: catch without try" + c.ennd)
+            else
+                frame = tryStack[tryStack.len - 1]
+                if parts.len >= 2 then frame["catchVar"] = parts[1] else frame["catchVar"] = ""
+                frame["inCatch"] = true
+            end if
+
+        else if kw == "endtry" then
+            if tryStack.len == 0 then
+                print(c.yellow + "  warning: endtry without try" + c.ennd)
+            else
+                frame = tryStack.pop
+                blockTypeOrder.pop
+                enc = "__try__" + char(1) + frame["catchVar"] + char(1) + frame["tryBody"].join(char(2)) + char(1) + frame["catchBody"].join(char(2))
+                pushLine(enc)
+            end if
+
+        else if kw == "switch" then
+            switchVal = parts[1:].join(" ")
+            switchStack.push({"value": switchVal, "cases": [], "defaultBody": [], "inDefault": false})
+            blockTypeOrder.push("switch")
+
+        else if kw == "case" then
+            if switchStack.len == 0 then
+                print(c.yellow + "  warning: case without switch" + c.ennd)
+            else
+                frame = switchStack[switchStack.len - 1]
+                caseVal = parts[1:].join(" ")
+                frame["cases"].push({"val": caseVal, "body": []})
+                frame["inDefault"] = false
+            end if
+
+        else if kw == "default" then
+            if switchStack.len == 0 then
+                print(c.yellow + "  warning: default without switch" + c.ennd)
+            else
+                switchStack[switchStack.len - 1]["inDefault"] = true
+            end if
+
+        else if kw == "endswitch" then
+            if switchStack.len == 0 then
+                print(c.yellow + "  warning: endswitch without switch" + c.ennd)
+            else
+                frame = switchStack.pop
+                blockTypeOrder.pop
+                enc = "__switch__" + char(1) + frame["value"]
+                for cas in frame["cases"]
+                    enc = enc + char(4) + cas["val"] + char(1) + cas["body"].join(char(2))
+                end for
+                enc = enc + char(4) + "__default__" + char(1) + frame["defaultBody"].join(char(2))
+                pushLine(enc)
+            end if
+
+        else if kw == "if" then
+            condStr = parts[1:].join(" ")
+            branch = {"cond": condStr, "body": []}
+            ifStack.push({"branches": [branch], "elseBody": [], "inElse": false})
+            blockTypeOrder.push("if")
+
+        else if kw == "elif" then
+            if ifStack.len == 0 then
+                print(c.yellow + "  warning: elif without if" + c.ennd)
+            else
+                frame = ifStack[ifStack.len - 1]
+                frame["branches"].push({"cond": parts[1:].join(" "), "body": []})
+                frame["inElse"] = false
+            end if
+
+        else if kw == "else" then
+            if ifStack.len == 0 then
+                print(c.yellow + "  warning: else without if" + c.ennd)
+            else
+                ifStack[ifStack.len - 1]["inElse"] = true
+            end if
+
+        else if kw == "endif" then
+            if ifStack.len == 0 then
+                print(c.yellow + "  warning: endif without if" + c.ennd)
+            else
+                frame = ifStack.pop
+                blockTypeOrder.pop
+                enc = "__if__"
+                for branch in frame["branches"]
+                    enc = enc + char(1) + branch["cond"] + char(1) + branch["body"].join(char(2))
+                end for
+                enc = enc + char(1) + "__else__" + char(1) + frame["elseBody"].join(char(2))
+                pushLine(enc)
+            end if
+
+        else if kw == "for" then
+            // for @var in @list  OR  for @var in range(N,M)
+            if parts.len >= 4 and parts[2] == "in" then
+                forVar = parts[1]
+                if forVar[0:1] == "@" then forVar = forVar[1:]
+                forExpr = parts[3:].join(" ")
+                forStack.push({"var": forVar, "expr": forExpr, "body": []})
+                blockTypeOrder.push("for")
+            else
+                pushLine(line)
+            end if
+
+        else if kw == "endfor" then
+            if blockTypeOrder.len > 0 and blockTypeOrder[blockTypeOrder.len - 1] == "for" then
+                frame = forStack.pop
+                blockTypeOrder.pop
+                enc = "__for__" + char(1) + frame["var"] + char(1) + frame["expr"] + char(1) + frame["body"].join(char(2))
+                pushLine(enc)
+            else
+                print(c.yellow + "  warning: endfor without for" + c.ennd)
+            end if
+
+        else if kw == "while" or kw == "until" or kw == "repeat" then
+            maxIter = 999999
+            condParts = parts[1:]
+            if condParts.len >= 2 and condParts[-2] == "max" then
+                maxIter = condParts[-1].to_int
+                condParts = condParts[:-2]
+            end if
+            if kw == "repeat" then
+                maxIter = condParts[0].to_int
+                condStr = "__true__"
+            else
+                condStr = condParts.join(" ")
+                if kw == "until" then condStr = "not " + condStr
+            end if
+            loopStack.push({"cond": condStr, "body": [], "max": maxIter})
+            blockTypeOrder.push("loop")
+
+        else if kw == "endwhile" or kw == "enduntil" or kw == "endrepeat" then
+            if blockTypeOrder.len == 0 or blockTypeOrder[blockTypeOrder.len - 1] != "loop" then
+                print(c.yellow + "  warning: " + kw + " without matching loop" + c.ennd)
+            else
+                frame = loopStack.pop
+                blockTypeOrder.pop
+                enc = "__while__" + char(1) + frame["cond"] + char(1) + frame["max"] + char(1) + frame["body"].join(char(2))
+                pushLine(enc)
+            end if
+
+        else if kw == "menu" then
+            menuStack.push({"title": parts[1:].join(" "), "items": []})
+            blockTypeOrder.push("menu")
+
+        else
+            pushLine(line)
+        end if
+    end for
+
+    if blockTypeOrder.len > 0 then
+        print(c.yellow + "  warning: " + blockTypeOrder.len + " unclosed block(s): " + blockTypeOrder.join(", ") + c.ennd)
+    end if
+    return processedLines
+end function
+
+// ── HandleMenuLine ────────────────────────────────────────────────
+HandleMenuLine = function(line)
+    segs = line.split(char(1))
+    menuTitle = segs[1]
+    menuItems = []
+    if segs.len > 2 and segs[2] != "" then menuItems = segs[2].split(char(2))
+    print(char(10))
+    if menuTitle != "" then print(c.cyan + "<b>" + menuTitle + c.ennd)
+    print(c.grey + "─────────────────────────" + c.ennd)
+    for mitem in menuItems
+        iparts = mitem.split(char(3))
+        if iparts.len >= 1 then print(c.white + "  " + iparts[0] + c.ennd)
+    end for
+    print(c.grey + "─────────────────────────" + c.ennd)
+    mchoice = user_input(c.gold + "Choose: " + c.ennd, false, false)
+    mfound = false
+    for mitem in menuItems
+        iparts = mitem.split(char(3))
+        if iparts.len < 2 then continue
+        dispToks = iparts[0].split(" ")
+        firstTok = ""
+        if dispToks.len > 0 then firstTok = dispToks[0]
+        if firstTok == mchoice or iparts[0] == mchoice then
+            globals.macroQueue = [iparts[1]] + globals.macroQueue
+            mfound = true
+        end if
+        if mfound then break
+    end for
+    if not mfound then
+        print(c.yellow + "  invalid choice — try again" + c.ennd)
+        globals.macroQueue = [line] + globals.macroQueue
+    end if
+end function
+
+// ── HandleWhileLine ───────────────────────────────────────────────
+HandleWhileLine = function(line)
+    segs = line.split(char(1))
+    condStr   = segs[1]
+    remaining = segs[2].to_int
+    body = []
+    if segs.len > 3 and segs[3] != "" then body = segs[3].split(char(2))
+    if remaining <= 0 then
+        print(c.yellow + "  [" + macroName + "] loop: reached max " + segs[2] + " iterations" + c.ennd)
+    else if EvalCondition(condStr.split(" ")) then
+        newEntry = "__while__" + char(1) + condStr + char(1) + (remaining - 1) + char(1) + body.join(char(2))
+        globals.macroQueue = body + [newEntry] + globals.macroQueue
+    else
+        print(c.grey + "  [" + macroName + "] loop: condition false — exiting" + c.ennd)
+    end if
+end function
+
+// ── HandleIfLine ──────────────────────────────────────────────────
+HandleIfLine = function(line)
+    segs = line.split(char(1))
+    // segs[0]=="__if__", segs[1]=cond, segs[2]=body, repeating, segs[-2]="__else__", segs[-1]=elseBody
+    i = 1
+    matched = false
+    while i < segs.len - 1 and not matched
+        cond = segs[i]
+        body = segs[i + 1]
+        if cond == "__else__" then
+            i = segs.len
+        else
+            if EvalCondition(cond.split(" ")) then
+                matched = true
+                if body != "" then
+                    globals.macroQueue = body.split(char(2)) + globals.macroQueue
+                end if
+            end if
+            i = i + 2
+        end if
+    end while
+    if not matched then
+        elseBody = segs[segs.len - 1]
+        if elseBody != "" then
+            globals.macroQueue = elseBody.split(char(2)) + globals.macroQueue
+        end if
+    end if
+end function
+
+// ── HandleTryLine ─────────────────────────────────────────────────
+// Pushes try body + __catch__ sentinel + __tryend__ into macroQueue.
+// On normal path: __catch__ is a no-op, __tryend__ clears catch state.
+// On error path: HandleMacroPipeFail scans for __catch__ and jumps to it.
+HandleTryLine = function(line)
+    segs = line.split(char(1))
+    catchVar  = segs[1]
+    tryBody   = segs[2]
+    catchBody = segs[3]
+    // store catch info globally so pipeFail handler can access it
+    globals.macroCatchVar  = catchVar
+    globals.macroCatchBody = catchBody
+    globals.macroInTry     = true
+    tryLines = []
+    if tryBody != "" then tryLines = tryBody.split(char(2))
+    catchSentinel = "__catch__" + char(1) + catchVar + char(1) + catchBody
+    globals.macroQueue = tryLines + [catchSentinel, "__tryend__"] + globals.macroQueue
+end function
+
+// ── HandleCatchLine ───────────────────────────────────────────────
+// Normal path (no error): skip the catch sentinel, just clear try state.
+HandleCatchLine = function(line)
+    // Normal execution reached __catch__ — try succeeded, skip catch body
+    // Just clear try state; __tryend__ will follow and also clear
+    globals.macroInTry = false
+    // Skip past __tryend__ if it's next
+    if globals.macroQueue.len > 0 and globals.macroQueue[0] == "__tryend__" then
+        globals.macroQueue = globals.macroQueue[1:]
+    end if
+end function
+
+// ── HandleTryendLine ─────────────────────────────────────────────
+HandleTryendLine = function()
+    globals.macroInTry    = false
+    globals.macroCatchVar  = ""
+    globals.macroCatchBody = ""
+end function
+
+// ── HandleSwitchLine ─────────────────────────────────────────────
+// Evaluates switch value and pushes matching case body.
+HandleSwitchLine = function(line)
+    segs = line.split(char(4))
+    // segs[0] = "__switch__" + char(1) + value
+    valParts = segs[0].split(char(1))
+    switchVal = valParts[1]
+    // resolve @var
+    if switchVal.len > 1 and switchVal[0:1] == "@" then
+        vn = switchVal[1:]
+        if pipeVars.hasIndex(vn) then switchVal = pipeVars[vn]
+    end if
+
+    i = 1
+    matched = false
+    while i < segs.len and not matched
+        caseParts = segs[i].split(char(1))
+        caseVal  = caseParts[0]
+        caseBody = ""
+        if caseParts.len > 1 then caseBody = caseParts[1]
+        if caseVal == "__default__" then
+            i = i + 1
+            continue
+        end if
+        // resolve case val too
+        resolvedCase = caseVal
+        if resolvedCase.len > 1 and resolvedCase[0:1] == "@" then
+            vn = resolvedCase[1:]
+            if pipeVars.hasIndex(vn) then resolvedCase = pipeVars[vn]
+        end if
+        if resolvedCase == switchVal then
+            matched = true
+            if caseBody != "" then
+                globals.macroQueue = caseBody.split(char(2)) + globals.macroQueue
+            end if
+        end if
+        i = i + 1
+    end while
+
+    if not matched then
+        // find default
+        for seg in segs
+            dp = seg.split(char(1))
+            if dp[0] == "__default__" and dp.len > 1 and dp[1] != "" then
+                globals.macroQueue = dp[1].split(char(2)) + globals.macroQueue
+            end if
+        end for
+    end if
+end function
+
+// ── HandleForLine ─────────────────────────────────────────────────
+// Iterates a list/range, pushing body lines for each item.
+HandleForLine = function(line)
+    segs = line.split(char(1))
+    varName = segs[1]
+    expr    = segs[2]
+    body    = segs[3]
+
+    // resolve list items
+    items = []
+    if expr.len >= 6 and expr[:6] == "range(" then
+        // range(N,M) — generate numeric list
+        inner = expr[6:]
+        closeIdx = inner.indexOf(")")
+        if closeIdx != null then inner = inner[:closeIdx]
+        rangeParts = inner.split(",")
+        if rangeParts.len >= 2 then
+            startN = rangeParts[0].to_int
+            endN   = rangeParts[1].to_int
+            k = startN
+            while k <= endN
+                items.push("" + k)
+                k = k + 1
+            end while
+        end if
+    else if expr.len > 1 and expr[0:1] == "@" then
+        // @listvar — look up comma-separated value
+        vn = expr[1:]
+        val = ""
+        if pipeVars.hasIndex(vn) then val = pipeVars[vn]
+        if val != "" then items = val.split(",")
+    else
+        // literal comma-separated
+        if expr != "" then items = expr.split(",")
+    end if
+
+    if items.len == 0 then return
+
+    // set var for first item
+    firstItem = items[0]
+    globals.pipeVars[varName] = firstItem
+    gcoF = get_custom_object
+    if not gcoF.hasIndex("clips") then gcoF.clips = {}
+    gcoF.clips[varName] = firstItem
+
+    bodyLines = []
+    if body != "" then bodyLines = body.split(char(2))
+
+    if items.len > 1 then
+        // encode continuation with remaining items as char(5)-joined list
+        remaining = items[1:]
+        // re-encode as __for__ with remaining items
+        nextEnc = "__for__" + char(1) + varName + char(1) + remaining.join(",") + char(1) + body
+        // but we need to re-encode remaining as the expr (comma-joined), not as @var
+        // Mark that it's a raw list (not @var) by using literal encoding
+        globals.macroQueue = bodyLines + [nextEnc] + globals.macroQueue
+    else
+        globals.macroQueue = bodyLines + globals.macroQueue
+    end if
+end function
+
+// ── HandleFuncend ─────────────────────────────────────────────────
+// Sentinel reached normally (function returned normally or fell through).
+HandleFuncend = function()
+    // nothing to do — just consumed as a sentinel
+end function
+
+// ── CheckMacroComplete ───────────────────────────────────────────
+CheckMacroComplete = function()
+    if macroName != "" and macroQueue.len == 0 and pipeQueue.len == 0 and foreachBody == "" then
+        print(c.cyan + "<b>macro '" + macroName + "' done" + c.ennd)
+        globals.macroName    = ""
+        globals.macroArgList = []
+    end if
+end function
+
+// ── HandleMacroPipeFail ──────────────────────────────────────────
+HandleMacroPipeFail = function()
+    // 1. check for try/catch sentinel first (highest priority)
+    catchIdx = null
+    k = 0
+    while k < macroQueue.len
+        if macroQueue[k].len >= 9 and macroQueue[k][:9] == "__catch__" then
+            catchIdx = k
+            k = macroQueue.len
+        end if
+        k = k + 1
+    end while
+    if catchIdx != null then
+        catchLine = macroQueue[catchIdx]
+        segs = catchLine.split(char(1))
+        catchVar  = segs[1]
+        catchBody = ""
+        if segs.len > 2 then catchBody = segs[2]
+        // skip everything up to catch, push catch body
+        globals.macroQueue = macroQueue[catchIdx + 1:]
+        // skip __tryend__ if immediately next
+        if globals.macroQueue.len > 0 and globals.macroQueue[0] == "__tryend__" then
+            globals.macroQueue = globals.macroQueue[1:]
+        end if
+        if catchVar != "" then
+            throwMsg = ""
+            if globals.hasIndex("throwMessage") then throwMsg = globals.throwMessage
+            globals.pipeVars[catchVar] = throwMsg
+            gcoC = get_custom_object
+            if not gcoC.hasIndex("clips") then gcoC.clips = {}
+            gcoC.clips[catchVar] = throwMsg
+        end if
+        if catchBody != "" then
+            globals.macroQueue = catchBody.split(char(2)) + globals.macroQueue
+        end if
+        globals.pipeFailed    = false
+        globals.throwMessage  = ""
+        globals.macroInTry    = false
+        return
+    end if
+
+    // 2. check for nearest __while__ (loop continue)
+    loopIdx = null
+    k = 0
+    while k < macroQueue.len
+        if macroQueue[k].len >= 9 and macroQueue[k][:9] == "__while__" then
+            loopIdx = k
+            k = macroQueue.len
+        end if
+        k = k + 1
+    end while
+    if loopIdx != null then
+        skipped = loopIdx
+        globals.macroQueue = macroQueue[loopIdx:]
+        globals.pipeFailed = false
+        if skipped > 0 then print(c.grey + "  [" + macroName + "] fail — skip to next iteration (" + skipped + " line(s))" + c.ennd)
+        return
+    end if
+
+    // 3. exec single-step mode
+    if macroName == "exec" then
+        globals.pipeFailed = false
+        print(c.grey + "  [exec] fail — skipping" + c.ennd)
+        return
+    end if
+
+    // 4. abort macro
+    print(c.yellow + "  [" + macroName + "] pipeline fail — macro aborted (" + macroQueue.len + " line(s) skipped)" + c.ennd)
+    globals.macroQueue   = []
+    globals.macroName    = ""
+    globals.pipeFailed   = false
+    globals.macroArgList = []
+    globals.macroInTry   = false
+end function
