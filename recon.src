@@ -2,6 +2,45 @@
 //  recon.src  |  reconnaissance & proxy
 // ================================================================
 
+// ── Cmd wrappers (dispatch table entries — see commands.src) ─────
+CmdProxy = function(inp)
+    if inp.len == 2 then
+        ProxyWithChainSaw(inp[1].to_int)
+    else
+        ProxyWithChainSaw(1)
+    end if
+    // autoroot the final hop automatically via ChainSaw
+    if gco.hasIndex("proxyReady") and gco.proxyReady then
+        gco.proxyReady = false
+        // ChainSaw attack already happened in ProxyWithChainSaw
+        if IsRoot(globals.object) then
+            print(char(10) + c.green + "<b>Proxy chain + ChainSaw complete — root shell ready" + c.ennd)
+        else
+            print(char(10) + c.yellow + "<b>Proxy chain complete — ChainSaw crack failed, guest shell only" + c.ennd)
+        end if
+    end if
+end function
+
+CmdProxystatus = function(inp)
+    ProxyStatus
+end function
+
+CmdProxyclear = function(inp)
+    ProxyClear
+end function
+
+CmdNetmap = function(inp)
+    NetMap
+end function
+
+CmdHacklan = function(inp)
+    if inp.len == 2 then
+        HackLan(inp[1])
+    else
+        print("<b>Usage: hacklan [lan-ip]")
+    end if
+end function
+
 // ── NetMap ────────────────────────────────────────────────────
 NetMap = function()
     if typeof(object) == "shell" then
