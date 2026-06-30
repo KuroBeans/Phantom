@@ -1,3 +1,28 @@
+// ================================================================
+//  core.src  |  phantom module  |  rshell / cover / harvest / wifi / edb
+// ================================================================
+
+// ── Cmd wrappers (dispatch table entries — see commands.src) ─────
+CmdRshell = function(inp)
+    RShell(inp[1:])
+end function
+
+CmdCover = function(inp)
+    Cover
+end function
+
+CmdHarvest = function(inp)
+    Harvest
+end function
+
+CmdWifi = function(inp)
+    WiFiCrack
+end function
+
+CmdEdb = function(inp)
+    ExploitDB(inp[1:])
+end function
+
 // ops.src | cover + harvest
 // cover.src  |  phantom module  |  stealth + rshell
 
@@ -552,7 +577,7 @@ WiFiCrack = function()
     if aireplayResult then print(c.grey + "  aireplay: " + aireplayResult + c.ennd)
 
     // aircrack — pass the .cap file path
-    capFile = currentPath + "/file.cap"
+    capFile = "/root /file.cap"
     print(c.orange + "Running aircrack on " + capFile + "..." + c.ennd)
     capFileObj = comp.File(capFile)
     if not capFileObj then
