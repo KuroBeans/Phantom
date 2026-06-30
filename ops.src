@@ -1491,6 +1491,11 @@ Scan = function(ip, port, comp, inject, libName)
     end if
     // check db.txt for known exploits for this lib - skip scanning if found
     dbFile = myComp.File(currentPath + "/db.txt")
+dbFile = myComp.File(currentPath + "/db.txt")
+if not dbFile then
+    myComp.touch(currentPath, "db.txt")
+    dbFile = myComp.File(currentPath + "/db.txt")
+end if
     if dbFile and typeof(dbFile) == "file" then
         content = dbFile.get_content
         if content and content != "" then
