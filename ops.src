@@ -1,3 +1,1007 @@
+// ================================================================
+//  ops.src  |  phantom module  |  file ops, recon primitives,
+//             exploitation, password cracking, help
+// ================================================================
+
+// ── Cmd wrappers (dispatch table entries — see commands.src) ─────
+CmdHelp = function(inp)
+    if inp.len == 1 then ShowHelp(null) else ShowHelp(inp[1])
+end function
+
+CmdTree = function(inp)
+    path = myPath
+    if inp.len == 2 then path = inp[1]
+    Tree(path, myComp, true, null)
+end function
+
+CmdRtree = function(inp)
+    if not object then
+        print(c.yellow + "<b>rtree: not holding remote object" + c.ennd)
+    else
+        path = remotePath
+        if inp.len == 2 then path = inp[1]
+        Tree(path, object, false, null)
+    end if
+end function
+
+CmdLs = function(inp)
+    Ls(inp, myPath, myComp, true)
+end function
+
+CmdCd = function(inp)
+    if inp.len == 1 then
+        globals.myPath = currentPath
+    else if inp[1] == ".." then
+        f = myComp.File(myPath).parent
+        if f then globals.myPath = f.path
+    else
+        f = GetFile(inp[1], myComp, true)
+        if f and f.is_folder then
+            globals.myPath = f.path
+        else
+            print(c.yellow + "<b>cd: not found" + c.ennd)
+        end if
+    end if
+end function
+
+CmdCat = function(inp)
+    if inp.len == 2 then Cat(inp[1], myComp, true) else print("<b>Usage: cat [file]")
+end function
+
+CmdMacref = function(inp)
+    MacroRef
+end function
+
+CmdCp = function(inp)
+    if inp.len == 3 then Cp(inp[1], inp[2], myComp, true) else print("<b>Usage: cp [src] [dst]")
+end function
+
+CmdMv = function(inp)
+    if inp.len == 3 then Mv(inp[1], inp[2], myComp, true) else print("<b>Usage: mv [src] [dst]")
+end function
+
+CmdRm = function(inp)
+    if inp.len == 2 then
+        Rm(inp[1], false, myComp, true)
+    else if inp.len == 3 and inp[1] == "-r" then
+        Rm(inp[2], true, myComp, true)
+    else
+        print("<b>Usage: rm [opt:-r] [path]")
+    end if
+end function
+
+CmdMkdir = function(inp)
+    if inp.len == 2 then Mkdir(inp[1], myComp, true) else print("<b>Usage: mkdir [path]")
+end function
+
+CmdTouch = function(inp)
+    if inp.len == 2 then Touch(inp[1], myComp, true) else print("<b>Usage: touch [path/file]")
+end function
+
+CmdChmod = function(inp)
+    if inp.len == 3 then
+        Chmod(inp[1], inp[2], false, myComp, true)
+    else if inp.len == 4 and inp[1] == "-R" then
+        Chmod(inp[2], inp[3], true, myComp, true)
+    else
+        print("<b>Usage: chmod [opt:-R] [perms] [path]")
+    end if
+end function
+
+CmdChown = function(inp)
+    if inp.len == 3 then
+        Chown(inp[1], inp[2], false, myComp, true)
+    else if inp.len == 4 and inp[1] == "-R" then
+        Chown(inp[2], inp[3], true, myComp, true)
+    else
+        print("<b>Usage: chown [opt:-R] [owner] [path]")
+    end if
+end function
+
+CmdChgrp = function(inp)
+    if inp.len == 3 then
+        Chgrp(inp[1], inp[2], false, myComp, true)
+    else if inp.len == 4 and inp[1] == "-R" then
+        Chgrp(inp[2], inp[3], true, myComp, true)
+    else
+        print("<b>Usage: chgrp [opt:-R] [group] [path]")
+    end if
+end function
+
+CmdSearch = function(inp)
+    if inp.len == 1 then Search("", myComp) else Search(inp[1], myComp)
+end function
+
+CmdPs = function(inp)
+    print(myComp.show_procs)
+end function
+
+CmdKill = function(inp)
+    if inp.len >= 2 then Kill(inp[1], myComp) else print("<b>Usage: kill [PID]")
+end function
+
+CmdPasswd = function(inp)
+    if inp.len == 2 then Passwd(inp[1], myComp) else print("<b>Usage: passwd [user]")
+end function
+
+CmdUseradd = function(inp)
+    if inp.len == 2 then UserAdd(inp[1], myComp) else print("<b>Usage: useradd [user]")
+end function
+
+CmdUserdel = function(inp)
+    if inp.len == 2 then
+        UserDel(inp[1], false, myComp)
+    else if inp.len == 3 and inp[1] == "-r" then
+        UserDel(inp[2], true, myComp)
+    else
+        print("<b>Usage: userdel [opt:-r] [user]")
+    end if
+end function
+
+CmdPwd = function(inp)
+    print(myPath)
+end function
+
+CmdWhoami = function(inp)
+    print(active_user)
+end function
+
+CmdClear = function(inp)
+    clear_screen
+end function
+
+CmdDecipher = function(inp)
+    if inp.len == 3 then
+        Decipher(inp[1], inp[2], myComp)
+    else
+        print("<b>Usage: decipher [-h user:hash] [-f /path/file]")
+    end if
+end function
+
+CmdCorlog = function(inp)
+    CorruptLog(myComp)
+end function
+
+CmdEscalate = function(inp)
+    Escalate(myComp)
+end function
+
+CmdDrop = function(inp)
+    if inp.len == 2 then Drop(inp[1]) else print("<b>Usage: drop [-r] [-l]")
+end function
+
+CmdTerminal = function(inp)
+    ans = user_input("Open local terminal? (y/n): ")
+    if ans == "y" then myShell.start_terminal
+end function
+
+// inp[0] is the raw "./binname" token
+CmdLocalBinary = function(inp)
+    cmd = inp[0]
+    f = GetFile(cmd[2:], myComp, true)
+    if not f then
+        print(c.yellow + "<b>./: not found: " + cmd[2:] + c.ennd)
+    else if not f.is_binary then
+        print(c.yellow + "<b>./: not a binary" + c.ennd)
+    else if inp.len > 1 then
+        myShell.launch(f.path, inp[1:].join(" "))
+    else
+        myShell.launch(f.path)
+    end if
+end function
+
+CmdRandip = function(inp)
+    if inp.len >= 2 then
+        RandIp(inp[1].to_int)
+    else
+        RandIp(1)
+    end if
+end function
+
+CmdIpenum = function(inp)
+    if inp.len < 2 then
+        print(c.yellow + "<b>usage: ipenum [port] [opt:@var]" + c.ennd)
+    else
+        sv = null
+        if inp.len >= 3 then
+            sv = inp[2]
+            if sv[0:1] == "@" then sv = sv[1:]
+        end if
+        IpEnum(inp[1], sv)
+    end if
+end function
+
+CmdPing = function(inp)
+    if inp.len == 2 then Ping(inp[1], myShell) else print("<b>Usage: ping [ip/pt/lt/bt]")
+end function
+
+CmdNslookup = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: nslookup <domain or ip> [@var]")
+    else
+        result = Nslookup([inp[1]])
+        if result != null then
+            globals.pipeResult = result
+            if inp.len >= 3 then
+                k = inp[2]
+                if k[0:1] == "@" then k = k[1:]
+                gco = get_custom_object
+                if not gco.hasIndex("clips") then gco.clips = {}
+                gco.clips[k] = result
+                pipeVars[k] = result
+                print(c.lime + "  @" + k + " = " + result + c.ennd)
+            end if
+        else
+            globals.pipeFailed = true
+        end if
+    end if
+end function
+
+CmdWhois = function(inp)
+    if inp.len == 2 then Whois(inp[1]) else print("<b>Usage: whois [public ip]")
+end function
+
+CmdWhoismail = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: whoismail <ip> [@var]")
+        print(c.grey + "  extracts admin email from whois and clips it" + c.ennd)
+    else
+        wip = inp[1]
+        if wip == "pt" then wip = publicTarget
+        if not is_valid_ip(wip) or is_lan_ip(wip) then
+            print(c.yellow + "<b>whoismail: need a public ip" + c.ennd)
+            globals.pipeFailed = true
+        else
+            wdata = whois(wip)
+            wemail = null
+            for wline in wdata.split(char(10))
+                if wline.indexOf("@") != null then
+                    for wpart in wline.split(" ")
+                        if wpart.indexOf("@") != null then
+                            wemail = wpart
+                        end if
+                        if wemail != null then break
+                    end for
+                end if
+                if wemail != null then break
+            end for
+            if wemail == null or wemail == "" then
+                print(c.yellow + "<b>whoismail: no email found in whois for " + wip + c.ennd)
+                globals.pipeFailed = true
+            else
+                print(c.cyan + "whoismail: " + wemail + c.ennd)
+                globals.pipeResult = wemail
+                k = "email"
+                if inp.len >= 3 then
+                    k = inp[2]
+                    if k[0:1] == "@" then k = k[1:]
+                end if
+                gco = get_custom_object
+                if not gco.hasIndex("clips") then gco.clips = {}
+                gco.clips[k] = wemail
+                pipeVars[k] = wemail
+                print(c.lime + "  @" + k + " = " + wemail + c.ennd)
+            end if
+        end if
+    end if
+end function
+
+CmdIfconfig = function(inp)
+    Ifconfig(myComp)
+end function
+
+CmdSet = function(inp)
+    if inp.len == 2 then
+        SetTarget(inp[1], null)
+        globals.pipeResult = inp[1]
+        globals.pipeVars["p"] = inp[1]
+    else if inp.len == 3 then
+        SetTarget(inp[1], inp[2])
+        globals.pipeResult = inp[1]
+        globals.pipeVars["p"] = inp[1]
+    else
+        print("<b>Usage: set [ip] [opt:-b]")
+    end if
+end function
+
+CmdUnset = function(inp)
+    if inp.len == 2 then
+        if inp[1] == "-p" or inp[1] == "-a" then globals.publicTarget = ""
+        if inp[1] == "-l" or inp[1] == "-a" then globals.localTarget  = ""
+        if inp[1] == "-b" or inp[1] == "-a" then globals.bounceTarget = ""
+    else
+        print("<b>Usage: unset [-p] [-l] [-b] [-a]")
+    end if
+end function
+
+CmdSsh = function(inp)
+    if inp.len == 3 then
+        Ssh(inp[1], inp[2], null, myShell)
+    else if inp.len == 4 then
+        Ssh(inp[1], inp[2], inp[3], myShell)
+    else
+        print("<b>Usage: ssh [user@pass] [ip] [opt:port]")
+    end if
+end function
+
+CmdScp = function(inp)
+    if inp.len >= 4 then Scp(inp[1], inp[2], inp[3]) else print("<b>Usage: scp [-u|-d] [src] [dst]")
+end function
+
+CmdNmap = function(inp)
+    if inp.len == 2 then
+        Nmap(inp[1], myComp, macroName != "")
+    else
+        print("<b>Usage: nmap [ip/pt/lt]")
+    end if
+end function
+
+CmdScan = function(inp)
+    if inp.len == 3 and inp[1] == "-l" then
+        Scan("-l", inp[2], myComp, null, null)
+    else if inp.len == 4 and inp[1] == "-l" then
+        Scan("-l", inp[2], myComp, inp[3], null)
+    else if inp.len == 3 then
+        Scan(inp[1], inp[2], myComp, null, null)
+    else if inp.len == 4 then
+        Scan(inp[1], inp[2], myComp, inp[3], null)
+    else if inp.len == 6 and inp[4] == "-lib" then
+        ScanRemoteLib(inp[1], inp[2], inp[3], inp[5])
+    else if inp.len == 8 and inp[4] == "-lib" then
+        ScanRemoteLib(inp[1], inp[2], inp[3], inp[5], inp[6], inp[7])
+    else
+        print("<b>Usage: scan [ip] [port] [lan-ip] -lib [lib.so] [opt:mem] [opt:val]")
+    end if
+end function
+
+CmdGrab = function(inp)
+    autoPush       = inp.indexOf("-push") != null
+    acceptComputer = inp.indexOf("-c")   != null
+    args = []
+    for a in inp[1:]
+        if a != "-push" and a != "-c" then args.push(a)
+    end for
+    if args.len == 2 then
+        Grab(args[0], args[1], null, null, null, acceptComputer)
+    else if args.len == 4 then
+        Grab(args[0], args[1], args[2], args[3], null, acceptComputer)
+    else if args.len == 5 then
+        Grab(args[0], args[1], args[2], args[3], args[4], acceptComputer)
+    else
+        print("<b>Usage: grab [ip] [port] [opt:mem] [opt:val] [opt:inject] [opt:-c] [opt:-push]")
+        print(c.grey + "  -c      accept computer objects (not just shells)" + c.ennd)
+        print(c.grey + "  -push   push result onto stack automatically" + c.ennd)
+    end if
+    if autoPush and (typeof(object) == "shell" or (acceptComputer and typeof(object) == "computer")) then
+        objectStack.push(object)
+        print(c.lime + "  [+] pushed to stack [" + objectStack.len + "]" + c.ennd)
+    end if
+end function
+
+CmdGetroot = function(inp)
+    if inp.len == 3 and object then
+        GetRoot(inp[1], inp[2], object)
+    else if inp.len == 3 then
+        print(c.yellow + "<b>getroot: not holding remote shell" + c.ennd)
+    else
+        print("<b>Usage: getroot [path] [password]")
+    end if
+end function
+
+CmdEnum = function(inp)
+    if inp.len != 2 then
+        print("<b>Usage: enum [-l] [-r]")
+    else if inp[1] == "-l" then
+        if lObject then Enum(lObject, lObject) else Enum(myComp, myComp)
+    else if inp[1] == "-r" then
+        if not object then
+            print(c.yellow + "<b>enum: not holding remote object" + c.ennd)
+        else if lObject then
+            Enum(lObject, object)
+        else
+            Enum(myComp, object)
+        end if
+    end if
+end function
+
+CmdRouterdata = function(inp)
+    if inp.len == 2 then
+        RouterData(inp[1], null)
+    else if inp.len == 3 then
+        RouterData(inp[1], inp[2])
+    else
+        print("<b>Usage: routerdata [ip] [opt:port]")
+    end if
+end function
+
+// inp[0] is the raw "r./binname" token
+CmdRemoteBinary = function(inp)
+    cmd = inp[0]
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>r./: not holding remote shell" + c.ennd)
+    else
+        rcomp = object.host_computer
+        bname = cmd[3:]
+        f = null
+        if bname.len > 0 and bname[0] == "/" then
+            f = rcomp.File(bname)
+        else
+            searchPaths = [remotePath, "/root", "/home/guest", "/bin", "/usr/bin"]
+            for sp in searchPaths
+                candidate = rcomp.File(sp + "/" + bname)
+                if candidate then
+                    f = candidate
+                    break
+                end if
+            end for
+        end if
+        if not f then
+            print(c.yellow + "<b>r./: not found: " + bname + c.ennd)
+        else if not f.is_binary then
+            print(c.yellow + "<b>r./: not a binary: " + f.path + c.ennd)
+        else if inp.len > 1 then
+            object.launch(f.path, inp[1:].join(" "))
+        else
+            object.launch(f.path)
+        end if
+    end if
+end function
+
+CmdRls = function(inp)
+    if not object then
+        print(c.yellow + "<b>rls: not holding remote object" + c.ennd)
+    else
+        Ls(inp, remotePath, object, false)
+    end if
+end function
+
+CmdAr = function(inp)
+    ar(null, null, null)
+end function
+
+CmdAstack = function(inp)
+    astack()
+end function
+
+CmdAutoroot = function(inp)
+    if inp.len == 2 and inp[1] == "--stack" then
+        // ChainSaw deploy to all stack objects
+        if objectStack.len == 0 then
+            print(c.yellow + "<b>autoroot --stack: stack is empty" + c.ennd)
+        else
+            print(c.orange + "Loading ChainSaw..." + c.ennd)
+            ChainSaw.load
+            wait(1)
+
+            print(char(10) + c.cyan + "<b>AUTOROOT STACK (ChainSaw)" + c.ennd)
+            print(c.grey + "  targeting " + objectStack.len + " object(s)" + c.ennd)
+            print(c.grey + "================================================================" + c.ennd)
+            rooted = 0
+            idx = 1
+            for stackObj in objectStack
+                if typeof(stackObj) != "shell" then
+                    idx = idx + 1
+                    continue
+                end if
+                globals.object = stackObj
+                globals.remotePath = "/"
+                comp = stackObj.host_computer
+                print(char(10) + c.orange + "[" + idx + "/" + objectStack.len + "] " + comp.public_ip + c.ennd)
+
+                rcePath = "/home/guest"
+                rceName = "chainsaw_rce"
+                rceSrc = rcePath + "/" + rceName + ".src"
+
+                n = char(10)
+                rceLines = []
+                rceLines.push("chainsaw = get_custom_object.chainsaw")
+                rceLines.push("chainsaw.load_samples")
+                rceLines.push("chainsaw.load_pregens")
+                rceLines.push("chainsaw.load_chains")
+                rceLines.push("chainsaw.crack(false)")
+                rceString = rceLines.join(n)
+
+                comp.touch(rcePath, rceName + ".src")
+                rceFile = comp.File(rceSrc)
+                if not rceFile then
+                    print(c.yellow + "  could not create RCE script" + c.ennd)
+                else
+                    rceFile.set_content(rceString)
+                    print(c.grey + "  building chainsaw_rce..." + c.ennd)
+                    buildRes = stackObj.build(rceSrc, rcePath)
+                    if typeof(buildRes) == "string" and buildRes != "" then
+                        print(c.yellow + "  build failed: " + buildRes + c.ennd)
+                    else
+                        print(c.grey + "  launching ChainSaw..." + c.ennd)
+                        stackObj.launch(rcePath + "/" + rceName)
+                        wait(2)
+
+                        gcoCS = get_custom_object
+                        if gcoCS.hasIndex("chainsaw") and gcoCS.chainsaw.shell != null then
+                            globals.object = gcoCS.chainsaw.shell
+                            globals.remotePath = "/"
+                            print(c.green + "  [+] rooted via ChainSaw" + c.ennd)
+                            print(c.gold + "      password: " + gcoCS.chainsaw.password + c.ennd)
+
+                            print(c.orange + "  planting weaklib..." + c.ennd)
+                            srcDir = "/root/InsecureLibs"
+                            libName = "libhttp.so"
+                            dest = "/lib"
+                            srcPath = srcDir + "/" + libName
+                            if myComp.File(srcPath) then
+                                result = myShell.scp(srcPath, dest, globals.object)
+                                if typeof(result) == "string" and result != "" then
+                                    print(c.yellow + "  plant failed: " + result + c.ennd)
+                                else
+                                    print(c.lime + "  [+] planted " + libName + c.ennd)
+                                end if
+                            else
+                                print(c.yellow + "  weaklib.so not found" + c.ennd)
+                            end if
+
+                            rooted = rooted + 1
+                        else
+                            print(c.yellow + "  ChainSaw failed" + c.ennd)
+                        end if
+                    end if
+                end if
+                idx = idx + 1
+            end for
+            div
+            print(c.cyan + "<b>autoroot --stack complete — " + rooted + "/" + objectStack.len + " rooted" + c.ennd)
+        end if
+    else if inp.len == 1 or inp.len == 4 then
+        // Single target mode: autoroot (held shell) OR autoroot [ip] [user] [pass] (ignored, uses held shell)
+        if not object or typeof(object) != "shell" then
+            print(c.yellow + "<b>autoroot: need a remote shell to deploy ChainSaw" + c.ennd)
+        else
+            print(c.orange + "Loading ChainSaw..." + c.ennd)
+
+            comp = object.host_computer
+            print(char(10) + c.cyan + "<b>AUTOROOT (ChainSaw)" + c.ennd)
+            print(c.grey + "  target: " + comp.public_ip + c.ennd)
+
+            rcePath = "/home/guest"
+            rceName = "chainsaw_rce"
+            rceSrc = rcePath + "/" + rceName + ".src"
+
+            n = char(10)
+            rceLines = []
+            rceLines.push("chainsaw = get_custom_object.chainsaw")
+            rceLines.push("chainsaw.load_samples")
+            rceLines.push("chainsaw.load_pregens")
+            rceLines.push("chainsaw.load_chains")
+            rceLines.push("chainsaw.crack(false)")
+            rceString = rceLines.join(n)
+
+            comp.touch(rcePath, rceName + ".src")
+            rceFile = comp.File(rceSrc)
+            if not rceFile then
+                print(c.yellow + "  could not create RCE script" + c.ennd)
+            else
+                rceFile.set_content(rceString)
+                print(c.orange + "  building chainsaw_rce..." + c.ennd)
+                buildRes = object.build(rceSrc, rcePath)
+                if typeof(buildRes) == "string" and buildRes != "" then
+                    print(c.yellow + "  build failed: " + buildRes + c.ennd)
+                else
+                    print(c.orange + "  launching ChainSaw..." + c.ennd)
+                    object.launch(rcePath + "/" + rceName)
+                    wait(2)
+
+                    gcoCS = get_custom_object
+                    if gcoCS.hasIndex("chainsaw") and gcoCS.chainsaw.shell != null then
+                        globals.object = gcoCS.chainsaw.shell
+                        globals.remotePath = "/"
+                        print(c.green + "<b>[+] ROOTED via ChainSaw!" + c.ennd)
+                        print(c.gold + "  password: " + gcoCS.chainsaw.password + c.ennd)
+
+                        libName = "libhttp.so"
+                        if not libName then libName = "init.so"
+
+                        print(c.orange + "  planting weaklib..." + c.ennd)
+                        srcDir = "/root/InsecureLibs"
+
+                        if not libName then libName == "init.so"
+                        dest = "/lib"
+                        srcPath = "/root/InsecureLibs/" + libName
+                        if myComp.File(srcPath) then
+                            result = myShell.scp(srcPath, dest, globals.object)
+                            if typeof(result) == "string" and result != "" then
+                                print(c.yellow + "  plant failed: " + result + c.ennd)
+                            else
+                                print(c.lime + "  [+] planted " + libName + c.ennd)
+                            end if
+                        else
+                            print(c.yellow + "  weaklib.so not found" + c.ennd)
+                        end if
+                    else
+                        print(c.yellow + "  ChainSaw failed" + c.ennd)
+                    end if
+                end if
+            end if
+        end if
+    else
+        print("<b>Usage: autoroot  |  autoroot --stack  |  autoroot dict [pw1 pw2...]")
+    end if
+end function
+
+CmdRcd = function(inp)
+    if not object then
+        print(c.yellow + "<b>rcd: not holding remote object" + c.ennd)
+    else if inp.len == 1 then
+        globals.remotePath = "/"
+    else if inp[1] == ".." then
+        comp = object.host_computer
+        if typeof(object) != "shell" then comp = object
+        f = comp.File(remotePath).parent
+        if f then globals.remotePath = f.path
+    else
+        f = GetFile(inp[1], object, false)
+        if f and f.is_folder then
+            globals.remotePath = f.path
+        else
+            print(c.yellow + "<b>rcd: not found" + c.ennd)
+        end if
+    end if
+end function
+
+CmdRcat = function(inp)
+    if not object then
+        print(c.yellow + "<b>rcat: not holding remote object" + c.ennd)
+    else if inp.len >= 2 then
+        Cat(inp[1], object, false)
+    else
+        print("<b>Usage: rcat [file]")
+    end if
+end function
+
+CmdRcp = function(inp)
+    if not object then
+        print(c.yellow + "<b>rcp: not holding remote object" + c.ennd)
+    else if inp.len == 3 then
+        Cp(inp[1], inp[2], object, false)
+    else
+        print("<b>Usage: rcp [src] [dst]")
+    end if
+end function
+
+CmdRmv = function(inp)
+    if not object then
+        print(c.yellow + "<b>rmv: not holding remote object" + c.ennd)
+    else if inp.len == 3 then
+        Mv(inp[1], inp[2], object, false)
+    else
+        print("<b>Usage: rmv [src] [dst]")
+    end if
+end function
+
+CmdRrm = function(inp)
+    if not object then
+        print(c.yellow + "<b>rrm: not holding remote object" + c.ennd)
+    else if inp.len == 2 then
+        Rm(inp[1], false, object, false)
+    else if inp.len == 3 and inp[1] == "-r" then
+        Rm(inp[2], true, object, false)
+    else
+        print("<b>Usage: rrm [opt:-r] [path]")
+    end if
+end function
+
+CmdRmkdir = function(inp)
+    if not object then
+        print(c.yellow + "<b>rmkdir: not holding remote object" + c.ennd)
+    else if inp.len == 2 then
+        Mkdir(inp[1], object, false)
+    else
+        print("<b>Usage: rmkdir [path]")
+    end if
+end function
+
+CmdRtouch = function(inp)
+    if not object then
+        print(c.yellow + "<b>rtouch: not holding remote object" + c.ennd)
+    else if inp.len == 2 then
+        Touch(inp[1], object, false)
+    else
+        print("<b>Usage: rtouch [path/file]")
+    end if
+end function
+
+CmdRchmod = function(inp)
+    if not object then
+        print(c.yellow + "<b>rchmod: not holding remote object" + c.ennd)
+    else if inp.len == 3 then
+        Chmod(inp[1], inp[2], false, object, false)
+    else if inp.len == 4 and inp[1] == "-R" then
+        Chmod(inp[2], inp[3], true, object, false)
+    else
+        print("<b>Usage: rchmod [opt:-R] [perms] [path]")
+    end if
+end function
+
+CmdRchown = function(inp)
+    if not object then
+        print(c.yellow + "<b>rchown: not holding remote object" + c.ennd)
+    else if inp.len == 3 then
+        Chown(inp[1], inp[2], false, object, false)
+    else if inp.len == 4 and inp[1] == "-R" then
+        Chown(inp[2], inp[3], true, object, false)
+    else
+        print("<b>Usage: rchown [opt:-R] [owner] [path]")
+    end if
+end function
+
+CmdRchgrp = function(inp)
+    if not object then
+        print(c.yellow + "<b>rchgrp: not holding remote object" + c.ennd)
+    else if inp.len == 3 then
+        Chgrp(inp[1], inp[2], false, object, false)
+    else if inp.len == 4 and inp[1] == "-R" then
+        Chgrp(inp[2], inp[3], true, object, false)
+    else
+        print("<b>Usage: rchgrp [opt:-R] [group] [path]")
+    end if
+end function
+
+CmdRsearch = function(inp)
+    if not object then
+        print(c.yellow + "<b>rsearch: not holding remote object" + c.ennd)
+    else if inp.len == 1 then
+        Search("", object)
+    else
+        Search(inp[1], object)
+    end if
+end function
+
+CmdRps = function(inp)
+    if not object then
+        print(c.yellow + "<b>rps: not holding remote object" + c.ennd)
+    else if typeof(object) == "shell" then
+        print(object.host_computer.show_procs)
+    else
+        print(object.show_procs)
+    end if
+end function
+
+CmdRkill = function(inp)
+    if not object then
+        print(c.yellow + "<b>rkill: not holding remote object" + c.ennd)
+    else if inp.len >= 2 then
+        Kill(inp[1], object)
+    else
+        print("<b>Usage: rkill [PID]")
+    end if
+end function
+
+CmdRpasswd = function(inp)
+    if not object then
+        print(c.yellow + "<b>rpasswd: not holding remote object" + c.ennd)
+    else if inp.len == 2 then
+        Passwd(inp[1], object)
+    else
+        print("<b>Usage: rpasswd [user]")
+    end if
+end function
+
+CmdRuseradd = function(inp)
+    if not object then
+        print(c.yellow + "<b>ruseradd: not holding remote object" + c.ennd)
+    else if inp.len == 2 then
+        UserAdd(inp[1], object)
+    else
+        print("<b>Usage: ruseradd [user]")
+    end if
+end function
+
+CmdRuserdel = function(inp)
+    if not object then
+        print(c.yellow + "<b>ruserdel: not holding remote object" + c.ennd)
+    else if inp.len == 2 then
+        UserDel(inp[1], false, object)
+    else if inp.len == 3 and inp[1] == "-r" then
+        UserDel(inp[2], true, object)
+    else
+        print("<b>Usage: ruserdel [opt:-r] [user]")
+    end if
+end function
+
+CmdRcorlog = function(inp)
+    if not object then
+        print(c.yellow + "<b>rcorlog: not holding remote object" + c.ennd)
+    else
+        CorruptLog(object)
+    end if
+end function
+
+CmdRterminal = function(inp)
+    Rterminal(object)
+end function
+
+CmdRdecipher = function(inp)
+    if not object then
+        print(c.yellow + "<b>rdecipher: not holding remote object" + c.ennd)
+    else if inp.len == 3 then
+        Decipher(inp[1], inp[2], object)
+    else
+        print("<b>Usage: rdecipher [-h user:hash] [-f /path/file]")
+    end if
+end function
+
+CmdLanenum = function(inp)
+    sv = null
+    if inp.len >= 2 then
+        sv = inp[1]
+        if sv[0:1] == "@" then sv = sv[1:]
+    end if
+    LanEnum(sv)
+end function
+
+CmdRgrep = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: rgrep <pattern> [path] [@var]")
+    else if not object then
+        print(c.yellow + "<b>rgrep: not holding remote object" + c.ennd)
+    else
+        path = "/"
+        storeKey = null
+        if inp.len >= 3 and inp[-1][0:1] == "@" then
+            storeKey = inp[-1][1:]
+            path = inp[2:-1].join(" ")
+        else if inp.len >= 3 then
+            path = inp[2]
+        end if
+        print(c.orange + "Searching for '" + inp[1] + "' in " + path + " ..." + c.ennd)
+        matchedLines = RGrep(inp[1], path, object)
+        if matchedLines == null or matchedLines.len == 0 then
+            print(c.yellow + "<b>rgrep: no matches" + c.ennd)
+            globals.pipeFailed = true
+        else
+            print(c.cyan + "rgrep: " + matchedLines.len + " match(es)" + c.ennd)
+            joined = matchedLines.join(",")
+            globals.pipeResult = joined
+            if storeKey != null then
+                gco = get_custom_object
+                if not gco.hasIndex("clips") then gco.clips = {}
+                gco.clips[storeKey] = joined
+                pipeVars[storeKey] = joined
+                print(c.lime + "  @" + storeKey + " = " + joined + c.ennd)
+            end if
+        end if
+    end if
+end function
+
+CmdRfind = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: rfind <pattern> [path]")
+    else if not object then
+        print(c.yellow + "<b>rfind: not holding remote object" + c.ennd)
+    else
+        path = "/"
+        if inp.len >= 3 then path = inp[2]
+        print(c.orange + "Finding '" + inp[1] + "' in " + path + " ..." + c.ennd)
+        total = RFind(inp[1], path, object)
+        print(c.cyan + "rfind: " + total + " result(s)" + c.ennd)
+        if total == 0 then globals.pipeFailed = true
+    end if
+end function
+
+CmdStackgrep = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: stackgrep <pattern> [path] [@var]")
+    else if objectStack.len == 0 then
+        print(c.yellow + "<b>stackgrep: stack is empty" + c.ennd)
+    else
+        path = "/"
+        storeKey = null
+        if inp.len >= 3 and inp[-1][0:1] == "@" then
+            storeKey = inp[-1][1:]
+            path = inp[2:-1].join(" ")
+        else if inp.len >= 3 then
+            path = inp[2]
+        end if
+        allMatches = []
+        i = 1
+        for obj in objectStack
+            if typeof(obj) != "shell" and typeof(obj) != "computer" then
+                i = i + 1
+                continue
+            end if
+            comp = obj
+            if typeof(obj) == "shell" then comp = obj.host_computer
+            print(c.cyan + "<b>[" + i + "] " + comp.public_ip + c.ennd + c.grey + "  lan:" + comp.local_ip + c.ennd)
+            lines3 = RGrep(inp[1], path, obj)
+            if lines3 != null then
+                for ml in lines3
+                    allMatches.push(ml)
+                end for
+            end if
+            i = i + 1
+        end for
+        div
+        print(c.cyan + "stackgrep: " + allMatches.len + " total match(es) across " + objectStack.len + " object(s)" + c.ennd)
+        if allMatches.len > 0 then
+            joined = allMatches.join(",")
+            globals.pipeResult = joined
+            if storeKey != null then
+                gco = get_custom_object
+                if not gco.hasIndex("clips") then gco.clips = {}
+                gco.clips[storeKey] = joined
+                pipeVars[storeKey] = joined
+                print(c.lime + "  @" + storeKey + " = " + joined + c.ennd)
+            end if
+        else
+            globals.pipeFailed = true
+        end if
+    end if
+end function
+
+CmdStackfind = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: stackfind <pattern> [path]")
+    else if objectStack.len == 0 then
+        print(c.yellow + "<b>stackfind: stack is empty" + c.ennd)
+    else
+        path = "/"
+        if inp.len >= 3 then path = inp[2]
+        total = 0
+        i = 1
+        for obj in objectStack
+            if typeof(obj) != "shell" and typeof(obj) != "computer" then
+                i = i + 1
+                continue
+            end if
+            comp = obj
+            if typeof(obj) == "shell" then comp = obj.host_computer
+            print(c.cyan + "<b>[" + i + "] " + comp.public_ip + c.ennd + c.grey + "  lan:" + comp.local_ip + c.ennd)
+            n = RFind(inp[1], path, obj)
+            total = total + n
+            i = i + 1
+        end for
+        div
+        print(c.cyan + "stackfind: " + total + " total result(s) across " + objectStack.len + " object(s)" + c.ennd)
+    end if
+end function
+
+CmdCrack = function(inp)
+    if inp.len == 2 then
+        if not gco.hasIndex("rt") or gco.rt == null then buildRainbowTable
+        result = CrackHash(inp[1])
+        if result then
+            print(c.gold + "<b>cracked: " + result + c.ennd)
+        else
+            print(c.yellow + "<b>crack: hash not found in table" + c.ennd)
+        end if
+    else
+        print("<b>Usage: crack [hash]")
+    end if
+end function
+
+CmdBuildrt = function(inp)
+    // buildrt [order] [minLen] [maxLen]
+    // defaults: order=3 min=3 max=12  →  ~48k passwords
+    // example:  buildrt 2 3 14        →  ~200k+ passwords
+    oA = null
+    mnA = null
+    mxA = null
+    if inp.len >= 2 then oA  = inp[1].to_int
+    if inp.len >= 3 then mnA = inp[2].to_int
+    if inp.len >= 4 then mxA = inp[3].to_int
+    gco.rt = null
+    buildRainbowTable(oA, mnA, mxA)
+end function
+
+CmdRtgen = function(inp)
+    // rtgen [order] [minLen] [maxLen]
+    oA = null
+    mnA = null
+    mxA = null
+    if inp.len >= 2 then oA  = inp[1].to_int
+    if inp.len >= 3 then mnA = inp[2].to_int
+    if inp.len >= 4 then mxA = inp[3].to_int
+    RTGen(oA, mnA, mxA)
+end function
+
 // -- IsRoot -------------------------------------------------------
 // Returns true if the given shell has root-level write access
 IsRoot = function(sh)
@@ -301,7 +1305,7 @@ Cascade = function()
         print(c.orange + "<b>[" + i + "/" + shells.len + "] " + rcomp.public_ip + "  lan:" + rcomp.local_ip + c.ennd)
         globals.object     = sh
         globals.remotePath = "/"
-        WStack(false)
+        WStack([], false)
         div
         i = i + 1
     end for
@@ -428,7 +1432,15 @@ Scan = function(ip, port, comp, inject, libName)
             print(c.yellow + "<b>scan: invalid port" + c.ennd)
             return
         end if
-        ns = metaxploit.net_use(ip, portInt)
+        if globals.object and typeof(globals.object) == "shell" then
+            // Attack through proxy - use the host computer
+            comp = globals.object.host_computer
+            ns = metaxploit.net_use(ip, portInt)
+            // But route through the proxy by setting globals.object for downstream operations
+        else
+            // Direct attack
+            ns = metaxploit.net_use(ip, portInt)
+        end if
         if not ns then
             print(c.yellow + "<b>scan: no net session on " + ip + ":" + port + c.ennd)
             globals.pipeFailed = true
@@ -624,7 +1636,7 @@ Scan = function(ip, port, comp, inject, libName)
 end function
 
 // -- Grab ---------------------------------------------------------
-Grab = function(ip, port, mem, val, inject)
+Grab = function(ip, port, mem, val, inject, acceptComputer)
     if typeof(globals.metaxploit) != "library" then
         globals.metaxploit = include_lib(globals.currentPath + "/metaxploit.so")
         if not globals.metaxploit then globals.metaxploit = include_lib("/lib/metaxploit.so")
@@ -646,7 +1658,14 @@ Grab = function(ip, port, mem, val, inject)
         print(c.yellow + "<b>grab: invalid port" + c.ennd)
         return
     end if
-    ns = metaxploit.net_use(ip, portInt)
+    if globals.object and typeof(globals.object) == "shell" then
+        // Proxy is active, but still use metaxploit.net_use directly
+        // Grey Hack routes it through globals.object automatically
+        ns = metaxploit.net_use(ip, portInt)
+    else
+        // Direct attack
+        ns = metaxploit.net_use(ip, portInt)
+    end if
     if not ns then
         globals.pipeFailed = true
         print(c.yellow + "<b>grab: no net session" + c.ennd)
@@ -719,12 +1738,19 @@ Grab = function(ip, port, mem, val, inject)
                     mem = e.mem
                     val = e.val
                 end if
-            else
-                if typeof(res) == "computer" then
-                    print(c.grey + "    " + e.mem + " " + e.val + " -> computer (skipped, need shell)" + c.ennd)
+            else if typeof(res) == "computer" then
+                if acceptComputer then
+                    if mem == "" or mem == null then
+                        globals.object = res
+                        mem = e.mem
+                        val = e.val
+                        print(c.cyan + "  [+] computer found: " + e.mem + " " + e.val + c.ennd)
+                    end if
                 else
-                    print(c.grey + "    " + e.mem + " " + e.val + " -> " + typeof(res) + c.ennd)
+                    print(c.grey + "    " + e.mem + " " + e.val + " -> computer (use -c to accept)" + c.ennd)
                 end if
+            else
+                print(c.grey + "    " + e.mem + " " + e.val + " -> " + typeof(res) + c.ennd)
             end if
         end for
 
@@ -737,8 +1763,13 @@ Grab = function(ip, port, mem, val, inject)
                 if IsRoot(globals.object) then
                     print(c.lime + "<b>root shell obtained" + c.ennd)
                 else
-                    print(c.cyan + "<b>object obtained" + c.ennd)
+                    print(c.cyan + "<b>shell obtained" + c.ennd)
                 end if
+                GETPERMS(globals.object)
+            else if typeof(globals.object) == "computer" then
+                globals.pipeResult = ip
+                globals.pipeVars["p"] = ip
+                print(c.cyan + "<b>computer obtained" + c.ennd)
                 GETPERMS(globals.object)
             end if
             return
@@ -765,12 +1796,21 @@ Grab = function(ip, port, mem, val, inject)
         if IsRoot(globals.object) then
             print(c.lime + "<b>root shell obtained" + c.ennd)
         else
-            print(c.cyan + "<b>object obtained" + c.ennd)
+            print(c.cyan + "<b>shell obtained" + c.ennd)
         end if
+        GETPERMS(globals.object)
+    else if typeof(globals.object) == "computer" and acceptComputer then
+        globals.pipeResult = ip
+        globals.pipeVars["p"] = ip
+        print(c.cyan + "<b>computer obtained" + c.ennd)
         GETPERMS(globals.object)
     else
         globals.pipeFailed = true
-        print(c.yellow + "<b>grab: result type: " + typeof(globals.object) + " (need shell)" + c.ennd)
+        if typeof(globals.object) == "computer" then
+            print(c.yellow + "<b>grab: got computer object — use -c flag to accept computers" + c.ennd)
+        else
+            print(c.yellow + "<b>grab: result type: " + typeof(globals.object) + " (need shell)" + c.ennd)
+        end if
     end if
 end function
 
@@ -1040,10 +2080,7 @@ end function
 
 // -- SCP ----------------------------------------------------------
 Scp = function(flag, orig, dest)
-    if typeof(object) != "shell" then
-        print(c.yellow + "<b>scp: need remote shell" + c.ennd)
-        return
-    end if
+
     if not orig or orig == "" then
         print(c.yellow + "<b>scp: missing source path" + c.ennd)
         return
@@ -1053,20 +2090,43 @@ Scp = function(flag, orig, dest)
         return
     end if
     if flag == "-u" then
-        result = myShell.scp(orig, dest, object)
-        if typeof(result) == "string" and result != "" then
-            print(c.yellow + "<b>scp: " + result + c.ennd)
-        end if
+		if typeof(object) == "shell" then
+        		result = myShell.scp(orig, dest, object)
+			if typeof(result) == "string" and result != "" then
+				print(c.yellow + char(9) + "<b>scp: " + result)
+			else	
+			if typeof(object) == "computer" then
+			src = myComp.File(orig)
+			if not src or src == null or src == "" then
+				print(c.yellow + char(9) + "scp: Src File Not Found")
+				return
+			end if
+		
+		content = src.get_content
+		fname = orig.split("/")[-1]
+		if dest[-1:] == "/" then dest == dest[:-1]
+		object.touch(dest, fname)
+		dfile = object.File(dest + "/" + fname)
+		if not dfile or dfile == null then
+			print(c.yellow + char(9) + "<b>[i] Could not Create File")
+			return
+		end if
+		res = dfile.set_content(content)
+		if res != null or res != "" then
+			 print(c.green + char(9) + orig + " --> " + dest + "/" + fname)
+			return
+		end if
+		
     else if flag == "-d" then
         fname = orig.split("/")[-1]
         if dest[-1:] == "/" then dest = dest[:-1]
         result = object.scp(orig, dest, myShell)
         if result then
-            print(c.yellow + "<b>scp: " + result + c.ennd)
-        else
             print(c.green + "  " + fname + " -> " + dest + "/" + fname + c.ennd)
-        end if
+        	return
+		end if
     else
+		if flag == null or flag == "" then
         print(c.yellow + "<b>scp: unknown flag " + flag + "  (use -u or -d)" + c.ennd)
     end if
 end function
@@ -1126,6 +2186,7 @@ Tree = function(path, obj, local, prefix)
         i = i + 1
     end for
 end function
+
 Ls = function(inp, path, obj, local)
     if typeof(obj) == "shell" then obj = obj.host_computer
     folderPath = path
@@ -1547,8 +2608,10 @@ ShowHelp = function(flag)
         print(c.yellow+"<b>edb</b>"+c.ennd+"        edb  |  edb use/search/add/del/clear  (exploit database)")
         print(c.yellow+"<b>scan</b>"+c.ennd+"       scan [ip] [port] [lan-ip] -lib [lib.so] [opt:mem] [opt:val]")
         print(c.yellow+"<b>grab</b>"+c.ennd+"       grab [ip] [port] [mem] [val] [opt:inject]")
+		print(c.yellow+"<b>qg</b>"+c.ennd+"         qg [ip] [port] (quick grab a shell)")
         print(c.yellow+"<b>getroot</b>"+c.ennd+"    getroot [path] [password]")
         print(c.yellow+"<b>autoroot</b>"+c.ennd+"   autoroot  |  autoroot [ip] [user] [pass]")
+		print(c.grey + char(9) + "<b>ar                       -> escalate to root using Dictionary Attack" + c.ennd)
         print(c.yellow+"<b>enum</b>"+c.ennd+"       enum [-l] [-r]  (full filesystem dump)")
         print(c.yellow+"<b>harvest</b>"+c.ennd+"    harvest  (crack Mail.txt + Bank.txt)")
         print(c.yellow+"<b>wifi</b>"+c.ennd+"       wifi  (scan + crack nearby WiFi networks)")
@@ -1597,20 +2660,27 @@ ShowHelp = function(flag)
         print(c.grey + "  proxy [hops]        -> build anonymous chain first" + c.ennd)
         print(c.grey + "  scan pt 0           -> find router exploits" + c.ennd)
         print(c.grey + "  grab pt 0 [m] [v]   -> get router shell" + c.ennd)
-        print(c.grey + "  autoroot            -> escalate to root" + c.ennd)
+        print(c.grey + "  autoroot            -> escalate to root using ChainSaw" + c.ennd)
+		
         print(c.grey + "  upgrade             -> check local lib updates (upgrade -u to install)" + c.ennd)
-        print(c.grey + "  updatelib           -> scan target /lib, update edb" + c.ennd)
+        print(c.grey + "  plant               -> put weaklib into remote /lib" + c.ennd)
         print(c.grey + "  scan pt 0 [lanip] -lib libhttp.so  -> bounce to LAN device" + c.ennd)
         print(c.grey + "  jump --rshell       -> set up rshell server on target" + c.ennd)
         print(c.grey + "  push/pop/stack/swap -> juggle multiple objects" + c.ennd)
         print(c.grey + "  cover               -> clean up traces" + c.ennd)
     end if
+	if flag == "" or flag == "-m" then
+		
 end function
 
 // -- Markov Password Generator -------------------------------------
-MarkovGenerate = function()
-    order = 3
+MarkovGenerate = function(orderArg, minLenArg, maxLenArg)
+    order     = 3
     minLength = 3
+    maxLength = 12   // was implicit (capped at seed word length) — now explicit
+    if typeof(orderArg)  == "number" then order     = orderArg
+    if typeof(minLenArg) == "number" then minLength = minLenArg
+    if typeof(maxLenArg) == "number" then maxLength = maxLenArg
 
     // multiple themed sample lists for more variety
     tables = {}
@@ -1644,14 +2714,16 @@ MarkovGenerate = function()
         end for
     end for
 
-    // collect start configs
+    // collect start configs — use maxLength as ceiling instead of seed length
     configMap = {}
     for sample in allSamples
         for startPos in range(0, sample.len - order)
             key = sample[startPos : startPos + order]
-            configKey = key + "|" + sample.len
+            // walk up to maxLength, not just the seed's own length
+            targetLen = maxLength
+            configKey = key + "|" + targetLen
             if not configMap.hasIndex(configKey) then
-                configMap[configKey] = [key, sample.len]
+                configMap[configKey] = [key, targetLen]
             end if
         end for
     end for
@@ -1678,6 +2750,10 @@ MarkovGenerate = function()
     end for
 
     // iterative markov branching
+    totalConfigs = configMap.indexes.len
+    configsDone  = 0
+    lastReport   = 0
+    print(c.grey + "  walking " + totalConfigs + " chain configs  (order=" + order + " min=" + minLength + " max=" + maxLength + ")..." + c.ennd)
     for configKey in configMap.indexes
         config = configMap[configKey]
         startKey = config[0]
@@ -1722,19 +2798,34 @@ MarkovGenerate = function()
                 stack.push([current + nextChar, target])
             end for
         end while
+        configsDone = configsDone + 1
+        pct = floor(configsDone / totalConfigs * 100)
+        if pct >= lastReport + 10 then
+            lastReport = pct
+            print(c.grey + "  " + pct + "%  " + passwordSet.len + " passwords so far..." + c.ennd)
+        end if
     end for
 
     return passwordSet.indexes
 end function
 
 // -- Rainbow Table ------------------------------------------------
-buildRainbowTable = function()
+buildRainbowTable = function(orderArg, minLenArg, maxLenArg)
     gco.rt = {}
     print(c.green + "Generating passwords via Markov chain..." + c.ennd)
-    passwords = MarkovGenerate()
+    passwords = MarkovGenerate(orderArg, minLenArg, maxLenArg)
     print(c.orange + "Hashing " + passwords.len + " passwords..." + c.ennd)
+    hashDone    = 0
+    hashTotal   = passwords.len
+    hashReport  = 0
     for pw in passwords
         gco.rt[md5(pw)] = pw
+        hashDone = hashDone + 1
+        hashPct = floor(hashDone / hashTotal * 100)
+        if hashPct >= hashReport + 25 then
+            hashReport = hashPct
+            print(c.grey + "  hashing " + hashPct + "%  (" + hashDone + "/" + hashTotal + ")" + c.ennd)
+        end if
     end for
     // import any .txt or .lst wordlist files from phantom folder
     localComp = myComp
@@ -1763,9 +2854,8 @@ buildRainbowTable = function()
 end function
 
 // -- RTGen - write rainbow table to disk --------------------------
-RTGen = function()
-    // build full table including wordlists first
-    buildRainbowTable()
+RTGen = function(orderArg, minLenArg, maxLenArg)
+    buildRainbowTable(orderArg, minLenArg, maxLenArg)
     print(c.orange + "Writing " + gco.rt.len + " entries to disk..." + c.ennd)
     rtPath = currentPath + "/rt"
     rtDir = myComp.File(rtPath)
@@ -1813,7 +2903,7 @@ CrackHash = function(hash)
 end function
 
 // -- AutoRoot -----------------------------------------------------
-AutoRoot = function(ip, user, pass)
+ar = function(ip, user, pass)
     if typeof(object) != "shell" then
         if not ip then
             print(c.yellow + "<b>autoroot: not holding remote shell" + c.ennd)
@@ -1885,22 +2975,24 @@ AutoRoot = function(ip, user, pass)
     end for
 
     print(c.orange + "Running " + passList.len + " passwords against target..." + c.ennd)
-    batchSize = 20
+    batchSize = 10000
+
     i = 0
     gco.rootShell = null
     while i < passList.len and not gco.rootShell
+		print(c.grey + "[DEBUG] i = " + i + " batchsize = " + batchSize + " passlist = " + passList.len + c.ennd)
         batch = passList[i : i + batchSize]
         object.launch(writePath + "/ar", batch.join(" "))
         i = i + batchSize
     end while
-
+	
     binFile.delete
 
     if gco.rootShell then
         globals.object = gco.rootShell
         globals.remotePath = "/"
         gco.rootShell = null
-        print(c.green + "<b>autoroot: root shell obtained" + c.ennd)
+        print(char(10) + c.purple + "<b>autoroot: root shell obtained" + c.ennd)
         GETPERMS(globals.object)
     else
         globals.pipeFailed = true
@@ -1911,7 +3003,7 @@ end function
 // -- AutorootStack ------------------------------------------------
 // Runs autoroot against every shell on the objectStack,
 // replacing each entry with a root shell on success.
-AutorootStack = function()
+astack = function()
     if objectStack.len == 0 then
         print(c.yellow + "<b>autoroot --stack: stack is empty" + c.ennd)
         return
@@ -1936,7 +3028,7 @@ AutorootStack = function()
     savedObject = globals.object
     rootCount = 0
     failCount = 0
-    print(c.cyan + "<b>autoroot --stack: escalating " + shells.len + " shell(s)..." + c.ennd)
+    print(c.cyan + "<b>astack: escalating " + shells.len + " shell(s)..." + c.ennd)
     div
 
     i = 0
@@ -1946,14 +3038,14 @@ AutorootStack = function()
         if IsRoot(sh) then
             print(c.lime + "  already root — planting..." + c.ennd)
             rootCount = rootCount + 1
-            srcPath = "/root/InsecureLibs/libhttp.so"
+            srcPath = "/root/InsecureLibs/init.so"
             if myComp.File(srcPath) then
                 r1 = myShell.scp(srcPath, "/lib", sh)
                 if typeof(r1) != "string" or r1 == "" then
-                    print(c.lime + "  [+] planted libhttp.so" + c.ennd)
+                    print(c.lime + "  [+] planted init.so" + c.ennd)
                 end if
             end if
-            mxSrc = "/root/metaxploit.so"
+            mxSrc = "/lib/metaxploit.so"
             if myComp.File(mxSrc) then
                 r2 = myShell.scp(mxSrc, "/lib", sh)
                 if typeof(r2) != "string" or r2 == "" then
@@ -1965,16 +3057,16 @@ AutorootStack = function()
         end if
         globals.object = sh
         globals.pipeFailed = false
-        AutoRoot(null, null, null)
+        ar(null, null, null)
         if not globals.pipeFailed then
             objectStack[indices[i]] = globals.object
             rootCount = rootCount + 1
             // plant libhttp.so + metaxploit.so now we have root
-            srcPath = "/root/InsecureLibs/libhttp.so"
+            srcPath = "/root/InsecureLibs/init.so"
             if myComp.File(srcPath) then
                 r1 = myShell.scp(srcPath, "/lib", globals.object)
                 if typeof(r1) != "string" or r1 == "" then
-                    print(c.lime + "  [+] planted libhttp.so" + c.ennd)
+                    print(c.lime + "  [+] planted init.so" + c.ennd)
                 end if
             end if
             mxSrc = "/root/metaxploit.so"
