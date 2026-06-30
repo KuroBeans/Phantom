@@ -1,22 +1,41 @@
-// ================================================================
-//  hack.src  |  phantom module  |  hacking pipeline consolidation
-// ================================================================
-// This module provides high-level hacking orchestration.
-// Low-level functions (Scan, Grab, etc.) are in core.src
-// Network functions (NetMap, HackLan, etc.) are in recon.src
-// Privilege escalation and stealth functions are in ops.src
-// Remote execution and lib operations are in remote.src
+///////////////////////////////////////////////////////////
+//////////////////////// Hack.src /////////////////////////
+///////////////////////////////////////////////////////////
+
+// ── Cmd wrappers (dispatch table entries — see commands.src) ─────
+// NOTE: the old inline dispatcher called WStack(true) / WStack(false)
+// — a single boolean — even though WStack's signature is
+// WStack(inp, localMode) and local mode indexes inp[0] for a lib
+// name. That mismatch looks like a pre-existing bug (local mode
+// would have received `true`/`false` as `inp` and crashed on
+// inp[0]). This wrapper passes inp[1:] through so WStack gets a
+// real argument list either way — flagging in case the old
+// behavior was somehow relied upon.
+CmdWstack = function(inp)
+    if inp.len == 2 and inp[1] == "-l" then
+        WStack(inp[1:], true)
+    else
+        WStack(inp[1:], false)
+    end if
+end function
+
+CmdCascade = function(inp)
+    Cascade()
+end function
 
 // ── ScanLib (wrapper) ─────────────────────────────────────────
 // Scan a target's libraries without grabbing yet
-WStack = function(localMode)
+WStack = function(inp, localMode)
     if localMode then
         // ── LOCAL MODE ────────────────────────────────────────────────────────
         targetIp = publicTarget
         if typeof(object) == "shell" then targetIp = object.host_computer.public_ip
         if typeof(object) == "computer" then targetIp = object.public_ip
         print(c.orange + "WStack local mode — discovering all LAN devices..." + c.ennd)
-        ml = metaxploit.load("/lib/libhttp.so")
+        libArg = "init.so"
+        if inp.len > 0 and inp[0] != "" and inp[0] != "-l" then libArg = inp[0]
+        ml = metaxploit.load("/lib/" + libArg)
+        if not ml then ml = metaxploit.load("/lib/libhttp.so")
         if not ml then
             print(c.yellow + "<b>wstack -l: libhttp.so not found in /lib" + c.ennd)
             return
@@ -79,7 +98,13 @@ WStack = function(localMode)
         pushed = 0
         for lanIp in deviceList
             print(c.orange + "  bouncing to " + lanIp + " ..." + c.ennd)
-            obj = ml.overflow("0x1F000FB5", "length", lanIp)
+            obj = ml.overflow("0x1F8F7708", "dexer", lanIp)
+			if obj == null then obj == ml.overflow("0x1F000FB5", "length", lanip)
+			if not obj then 
+				return print(c.yellow + "Use Lib init.so or libhttp.so")
+			end if
+			
+				
             if typeof(obj) != "computer" then continue
             objectStack.push(obj)
             pushed = pushed + 1
@@ -216,7 +241,8 @@ WStack = function(localMode)
         print(c.yellow + "<b>wstack: could not write to /home/guest" + c.ennd)
         return
     end if
-
+    lib = "init.so"
+    if inp.len > 0 and inp[0] != "" then lib = inp[0]
     q = char(34)
     n = char(10)
     bounceSrc = "gco = get_custom_object" + n
@@ -224,12 +250,14 @@ WStack = function(localMode)
     bounceSrc = bounceSrc + "metaxploit = include_lib(selfPath + char(47) + " + q + "metaxploit.so" + q + ")" + n
     bounceSrc = bounceSrc + "if not metaxploit then metaxploit = include_lib(" + q + "/lib/metaxploit.so" + q + ")" + n
     bounceSrc = bounceSrc + "if not metaxploit then exit(" + q + "no meta" + q + ")" + n
-    bounceSrc = bounceSrc + "ml = metaxploit.load(" + q + "/lib/libhttp.so" + q + ")" + n
-    bounceSrc = bounceSrc + "if not ml then exit(" + q + "no libhttp" + q + ")" + n
+    bounceSrc = bounceSrc + "ml = metaxploit.load(" + q + "/lib/init.so" + q +  ")" + n
+	bounceSrc = bounceSrc + "if ml == null then ml = metaxploit.load(" + q + "/lib/libhttp.so" + q +  ")" + n
+    bounceSrc = bounceSrc + "if not ml then exit(" + q + "no weaklib found" + q + ")" + n
     bounceSrc = bounceSrc + "objs = []" + n
     bounceSrc = bounceSrc + "ips = gco.wsIPs.split(" + q + "," + q + ")" + n
     bounceSrc = bounceSrc + "for lanIp in ips" + n
-    bounceSrc = bounceSrc + "  obj = ml.overflow(" + q + "0x1F000FB5" + q + ", " + q + "length" + q + ", lanIp)" + n
+    bounceSrc = bounceSrc + "  obj = ml.overflow(" + q + "0x1F8F7708" + q + ", " + q + "dexer" + q + ", lanIp)" + n
+	bounceSrc = bounceSrc + "  if not obj then obj == ml.overflow(" + q + "0x1F8F7708" + q + "," + q + "dexer" + q + ", lanIp)" + n
     bounceSrc = bounceSrc + "  if typeof(obj) == " + q + "computer" + q + " then objs.push(obj)" + n
     bounceSrc = bounceSrc + "end for" + n
     bounceSrc = bounceSrc + "gco.wsObjects = objs" + n
@@ -324,19 +352,19 @@ end function
 // ── QuickGrab (wrapper) ───────────────────────────────────────
 // Scan and grab in one shot with auto-edb lookup
 QuickGrab = function(ip, port)
-    if not is_valid_ip(ip) then
-        print(c.yellow + "<b>quickgrab: invalid ip" + c.ennd)
-        globals.pipeFailed = true
-        return
-    end if
+//    if not is_valid_ip(ip) then
+//        print(c.yellow + "<b>quickgrab: invalid ip" + c.ennd)
+//        globals.pipeFailed = true
+  //      return
+    //end if
     portInt = port.to_int
-    if typeof(portInt) != "number" then
-        print(c.yellow + "<b>quickgrab: invalid port" + c.ennd)
-        globals.pipeFailed = true
-        return
-    end if
+    //if typeof(portInt) != "number" then
+      //  print(c.yellow + "<b>quickgrab: invalid port" + c.ennd)
+        //globals.pipeFailed = true
+       // return
+    //end if
     print(c.orange + "Quick grab " + ip + ":" + port + "..." + c.ennd)
-    ns = metaxploit.net_use(ip, portInt)
+    ns = metaxploit.net_use(ip, port.to_int)
     if not ns then
         print(c.yellow + "<b>quickgrab: no net session" + c.ennd)
         globals.pipeFailed = true
@@ -352,7 +380,6 @@ QuickGrab = function(ip, port)
     for e in globals.edb
         if e.hasIndex("lib") and e.hasIndex("mem") and e.hasIndex("val") then
             if e["lib"] == metalib.lib_name then
-                print(c.grey + "  trying edb entry: " + e["mem"] + " " + e["val"] + c.ennd)
                 obj = metalib.overflow(e["mem"], e["val"])
                 if typeof(obj) == "shell" or typeof(obj) == "computer" then
                     globals.object = obj
@@ -436,240 +463,148 @@ LibAudit = function(libName)
     end for
 end function
 
-// ── AutorootStack (wrapper to ChainSaw version) ──────────────────
-AutorootStack = function
-    AutorootStackChainSaw()
-end function
-
-// ── AutorootStackChainSaw ───────────────────────────────────────
-// Root all shells in stack using ChainSaw deploy
-AutorootStackChainSaw = function
-    if objectStack.len == 0 then
-        print(c.yellow + "<b>autoroot --stack: stack is empty" + c.ennd)
-        return
-    end if
-    print(char(10) + c.cyan + "<b>AUTOROOT STACK (ChainSaw)" + c.ennd)
-    print(c.grey + "  targeting " + objectStack.len + " object(s)" + c.ennd)
-    print(c.grey + "================================================================" + c.ennd)
-    rooted = 0
-    i = 1
-    for obj in objectStack
-        if typeof(obj) != "shell" then
-            i = i + 1
-            continue
-        end if
-        globals.object = obj
-        globals.remotePath = "/"
-        comp = obj.host_computer
-        print(char(10) + c.orange + "[" + i + "/" + objectStack.len + "] " + comp.public_ip + c.ennd)
-        
-        // Deploy ChainSaw RCE to this target
-        rcePath = "/home/guest"
-        rceName = "chainsaw_rce"
-        rceSrc = rcePath + "/" + rceName + ".src"
-        
-        n = char(10)
-        rceLines = []
-        rceLines.push("chainsaw = get_custom_object.chainsaw")
-        rceLines.push("chainsaw.load_samples")
-        rceLines.push("chainsaw.load_pregens")
-        rceLines.push("chainsaw.load_chains")
-        rceLines.push("chainsaw.crack(false)")
-        rceString = rceLines.join(n)
-        
-        comp.touch(rcePath, rceName + ".src")
-        rceFile = comp.File(rceSrc)
-        if not rceFile then
-            print(c.yellow + "  could not create RCE script" + c.ennd)
-        else
-            rceFile.set_content(rceString)
-            print(c.grey + "  building chainsaw_rce..." + c.ennd)
-            buildRes = obj.build(rceSrc, rcePath)
-            if typeof(buildRes) == "string" and buildRes != "" then
-                print(c.yellow + "  build failed: " + buildRes + c.ennd)
-            else
-                print(c.grey + "  launching ChainSaw..." + c.ennd)
-                obj.launch(rcePath + "/" + rceName)
-                wait(2)
-                
-                gcoCS = get_custom_object
-                if gcoCS.hasIndex("chainsaw") and gcoCS.chainsaw.shell != null then
-                    globals.object = gcoCS.chainsaw.shell
-                    globals.remotePath = "/"
-                    print(c.green + "  [+] rooted via ChainSaw" + c.ennd)
-                    print(c.gold + "      password: " + gcoCS.chainsaw.password + c.ennd)
-                    rooted = rooted + 1
-                else
-                    print(c.yellow + "  ChainSaw failed" + c.ennd)
-                end if
-            end if
-        end if
-        i = i + 1
-    end for
-    div
-    print(c.cyan + "<b>autoroot --stack complete — " + rooted + "/" + objectStack.len + " rooted" + c.ennd)
-end function
-
 // ── ProxyWithChainSaw ───────────────────────────────────────────
-// Enhanced Proxy that uses ChainSaw to crack root on the final hop
+// ── ProxyWithChainSaw ───────────────────────────────────────────
+// Clean output + clear_screen after failed hops
 ProxyWithChainSaw = function(hops)
-    if typeof(hops) != "number" or hops < 1 then hops = 1
-    print(char(10) + c.cyan + "<b>PROXY CHAIN + CHAINSAW  building " + hops + " hop(s)..." + c.ennd)
-    print(c.grey + "----------------------------------------------------------------" + c.ennd)
-
+    if typeof(hops) != "number" or hops < 1 then hops = 2
+    
+    print(char(10) + c.cyan + "<b>=== BUILDING " + hops + "-HOP PROXY CHAIN ===" + c.ennd)
+    
     chain = []
     attempts = 0
-    maxAttempts = hops * 20
+    maxAttempts = hops * 30
 
     while chain.len < hops and attempts < maxAttempts
         attempts = attempts + 1
-
-        // generate random ip
-        a = floor(rnd * 256)
-        b = floor(rnd * 256)
-        d = floor(rnd * 256)
-        e = floor(rnd * 256)
-        ip = a + "." + b + "." + d + "." + e
-
-        if not is_valid_ip(ip) then continue
+        ip = floor(rnd*256) + "." + floor(rnd*256) + "." + floor(rnd*256) + "." + floor(rnd*256)
         if is_lan_ip(ip) then continue
-
-        print(c.grey + "  [" + chain.len + "/" + hops + "] trying " + ip + " ..." + c.ennd, 1)
-
-        // get router on port 0
+        
+        print(c.grey + " [" + chain.len + "/" + hops + "] Probing " + ip + " ..." + c.ennd)
+        
         router = get_router(ip)
-        if not router then continue
-
+        if not router then 
+            clear_screen
+            continue
+        end if
+        
         ns = metaxploit.net_use(ip, 0)
-        if not ns then continue
-
+        if not ns then 
+            clear_screen
+            continue
+        end if
+        
         ml = ns.dump_lib
-        if not ml then continue
-        if ml.is_patched then continue
-
-        mems = metaxploit.scan(ml)
-        if not mems then continue
-
-        // try each exploit
+        if not ml or ml.is_patched then 
+            clear_screen
+            continue
+        end if
+        
+        memList = metaxploit.scan(ml)
+        if not memList then 
+            clear_screen
+            continue
+        end if
+        
         shell = null
-        for mem in mems
+        for mem in memList
             if shell then break
             addrs = metaxploit.scan_address(ml, mem).split("Unsafe check: ")
-            for addr in addrs
-                if shell then break
-                if addr == addrs[0] then continue
-                val = addr[addr.indexOf("<b>") + 3 : addr.indexOf("</b>")]
+            for res in addrs
+                if res == addrs[0] then continue
+                valStart = res.indexOf("<b>")
+                if valStart == null then continue
+                valEnd = res.indexOf("</b>", valStart)
+                val = res[valStart + 3 : valEnd]
+                if val == "" then continue
+                
                 obj = ml.overflow(mem, val)
-                if typeof(obj) == "shell" then
+                if typeof(obj) == "shell" or typeof(obj) == "computer" then
                     shell = obj
                     EdbAdd(ml.lib_name, ml.version, mem, val)
-                else if typeof(obj) == "computer" then
-                    shell = obj
-                    EdbAdd(ml.lib_name, ml.version, mem, val)
+                    break
                 end if
             end for
         end for
-
-        if not shell then continue
-
-        // got a shell — add to chain
-        if typeof(shell) == "shell" then
-            chainIp = shell.host_computer.public_ip
+        
+        if shell then
+            hip = "???"
+            if typeof(shell) == "shell" and shell.host_computer then
+                hip = shell.host_computer.public_ip
+            else if typeof(shell) == "computer" then
+                hip = shell.public_ip
+            end if
+            chain.push(shell)
+            print(c.green + " [+] Hop " + chain.len + ": " + hip + c.ennd)
         else
-            chainIp = shell.public_ip
+            clear_screen   // clear after failed hop
         end if
-
-        chain.push(shell)
-        print(c.green + "  [" + chain.len + "/" + hops + "] hop " + chain.len + ": " + c.gold + chainIp + c.ennd)
     end while
 
     if chain.len == 0 then
-        print(c.yellow + "<b>proxy: could not find any exploitable routers" + c.ennd)
+        print(c.red + "<b>proxy: Could not build any valid hop" + c.ennd)
         return
     end if
 
-    if chain.len < hops then
-        print(c.yellow + "proxy: only found " + chain.len + "/" + hops + " hops" + c.ennd)
-    end if
-
-    // store chain in gco
     gco.proxyChain = chain
     gco.proxyDepth = chain.len
 
-    // set last hop as active object
-    globals.object = chain[chain.len - 1]
+    final = chain[-1]
+    globals.object = final
     globals.remotePath = "/"
 
-    // print chain summary
-    print(char(10) + c.cyan + "proxy chain established:" + c.ennd)
-    print(c.grey + "  you" + c.ennd)
-    i = 0
-    for hop in chain
-        if typeof(hop) == "shell" then hopIp = hop.host_computer.public_ip
-        if typeof(hop) == "computer" then hopIp = hop.public_ip
-        print(c.grey + "   └─ " + c.ennd + c.gold + "hop " + (i + 1) + " : " + hopIp + c.ennd)
-        i = i + 1
+    print(char(10) + c.cyan + "<b>Proxy chain ready (" + chain.len + " hops):" + c.ennd)
+    for i in range(0, chain.len-1)
+        hop = chain[i]
+        hip = "???"
+        if typeof(hop) == "shell" and hop.host_computer then
+            hip = hop.host_computer.public_ip
+        else if typeof(hop) == "computer" then
+            hip = hop.public_ip
+        end if
+        print(c.grey + "   Hop " + (i+1) + ": " + c.gold + hip + c.ennd)
     end for
-    print(c.grey + "   └─ " + c.ennd + c.orange + "target" + c.ennd)
 
-    // ── CHAINSAW PHASE ───────────────────────────────────────────
-    print(char(10) + c.orange + "Deploying ChainSaw RCE to target..." + c.ennd)
-    
-    if typeof(globals.object) != "shell" then
-        print(c.yellow + "<b>proxy: lost remote shell" + c.ennd)
-        print(c.green + "<b>proxy: active object set to hop " + chain.len + " (guest)" + c.ennd)
-        gco.proxyReady = false
-        return
-    end if
-    
-    rcomp = globals.object.host_computer
-    rcePath = "/home/guest"
-    rceName = "chainsaw_rce"
-    rceSrc = rcePath + "/" + rceName + ".src"
-    
-    // build RCE script that runs ChainSaw on target
-    n = char(10)
-    rceLines = []
-    rceLines.push("chainsaw = get_custom_object.chainsaw")
-    rceLines.push("chainsaw.load_samples")
-    rceLines.push("chainsaw.load_pregens")
-    rceLines.push("chainsaw.load_chains")
-    rceLines.push("chainsaw.crack(false)")
-    rceString = rceLines.join(n)
-    
-    rcomp.touch(rcePath, rceName + ".src")
-    rceFile = rcomp.File(rceSrc)
-    if not rceFile then
-        print(c.yellow + "<b>proxy: could not create RCE script on target" + c.ennd)
-        gco.proxyReady = false
-    else
-        rceFile.set_content(rceString)
-        print(c.orange + "  building chainsaw_rce on target..." + c.ennd)
-        buildRes = globals.object.build(rceSrc, rcePath)
-        if typeof(buildRes) == "string" and buildRes != "" then
-            print(c.yellow + "<b>proxy: remote build failed - " + buildRes + c.ennd)
-            gco.proxyReady = false
-        else
-            print(c.lime + "  [+] built chainsaw_rce" + c.ennd)
-            print(c.cyan + "  launching on target (cracking local root)..." + c.ennd)
-            globals.object.launch(rcePath + "/" + rceName)
-            wait(3)
-            
-            gcoCS = get_custom_object
-            if gcoCS.hasIndex("chainsaw") and gcoCS.chainsaw.shell != null then
-                globals.object = gcoCS.chainsaw.shell
-                globals.remotePath = "/"
-                print(c.lime + "<b>  [+] ROOT SHELL ACQUIRED via ChainSaw!" + c.ennd)
-                print(c.gold + "  password: " + gcoCS.chainsaw.password + c.ennd)
-                gco.proxyReady = true
+    // Root final hop
+    print(char(10) + c.orange + "Rooting final hop with ChainSaw..." + c.ennd)
+    if typeof(final) == "shell" then
+        ChainSaw.load
+        wait(1)
+        
+        rcomp = final.host_computer
+        rcePath = "/home/guest"
+        rceName = "cs_rce"
+        
+        rceCode = "chainsaw = get_custom_object.chainsaw" + char(10)
+        rceCode = rceCode + "chainsaw.load_samples" + char(10)
+        rceCode = rceCode + "chainsaw.load_pregens" + char(10)
+        rceCode = rceCode + "chainsaw.load_chains" + char(10)
+        rceCode = rceCode + "chainsaw.crack(false)"
+        
+        rcomp.touch(rcePath, rceName + ".src")
+        rf = rcomp.File(rcePath + "/" + rceName + ".src")
+        if rf then
+            rf.set_content(rceCode)
+            print(c.grey + "  Building on target..." + c.ennd)
+            buildRes = final.build(rcePath + "/" + rceName + ".src", rcePath)
+            if typeof(buildRes) == "string" and buildRes != "" then
+                print(c.yellow + "  Build failed: " + buildRes + c.ennd)
             else
-                print(c.yellow + "<b>proxy: ChainSaw crack failed" + c.ennd)
-                print(c.grey + "  keeping guest shell on final hop" + c.ennd)
-                gco.proxyReady = false
+                print(c.grey + "  Launching ChainSaw..." + c.ennd)
+                final.launch(rcePath + "/" + rceName)
+                wait(4)
+                
+                g = get_custom_object
+                if g.hasIndex("chainsaw") and g.chainsaw != null and g.chainsaw.shell != null then
+                    globals.object = g.chainsaw.shell
+                    globals.remotePath = "/"
+                    print(c.lime + "<b>[+] FINAL HOP ROOTED via ChainSaw!" + c.ennd)
+                    print(c.gold + "   Password: " + g.chainsaw.password + c.ennd)
+                end if
             end if
         end if
     end if
 
-    print(char(10) + c.green + "<b>proxy: active object set to hop " + chain.len + c.ennd)
-    print(c.grey + "  attacks and scans now route through the chain" + c.ennd)
+    print(c.green + "<b>Proxy is now active on final hop" + c.ennd)
+    print(c.grey + "Use: stack | swap 0 | scan pt 22" + c.ennd)
 end function
