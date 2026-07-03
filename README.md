@@ -11,7 +11,7 @@ Architecturally, each command is self-registering: a topic file (`ops.src`, `hac
 
 ## Installation
 
-GreyScript's `import_code` requires a literal path known when the script is loaded — it can't take a computed or relative path. Because of that, **phantom must live at `/root/ai/pt/`** on the machine you run it from, since that's the path hardcoded into `phantom.src`'s imports:
+ **phantom must live at `/root/ai/pt/`** on the machine you run it from, since that's the path hardcoded into `phantom.src`'s imports... or you can change the path I GUESS (just make sure you update everything that needs to be): 
 
 ```
 import_code("/root/ai/pt/macro.src")
@@ -39,7 +39,8 @@ If you want to install somewhere else, edit those ten lines to match. (Note: a h
 ## First run
 
 ```
-./phantom
+First you'll wanna run `ln /root/ai/tp/phantom /root/phantom` to make a direct link to phantom and make it easier to launch.
+
 ```
 
 On startup phantom loads `metaxploit.so`/`crypto.so`, auto-creates/loads `db.txt` (exploit database), `deadlibs.txt` (libs confirmed to have nothing exploitable), and `aliases.txt` (persisted command aliases) if present in the same folder, then drops you at a prompt. Type `help` for the current command list (`help -a` for everything, or `-l`/`-n`/`-h`/`-r` for local/network/hacking/remote subsets).
