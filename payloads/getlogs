@@ -1,0 +1,122 @@
+Hack_Site = function(metaLibrary,serviceFiles,comp)
+	version = metaLibrary.version
+	name = metaLibrary.lib_name[:-3]
+	if name[:3] == "lib" then name = metaLibrary.lib_name[3:-3]
+	for file in serviceFiles
+		serviceListContent = file.get_content
+		serviceList = serviceListContent.split(" ")
+		i = 1
+		for service in serviceList
+			if i % 3 == 1 then
+				if service == name + version then
+
+					object = metaLibrary.overflow(serviceList[i],serviceList[i+1])
+					if typeof(object) != "shell" then
+						i = i + 1
+						continue
+					end if
+
+					target = object.host_computer.File("/var/system.log")
+					if not target then
+						i = i + 1
+						continue
+					end if
+
+					if not target.has_permission("r") then
+						i = i + 1
+						continue
+					end if
+
+					return object
+				end if
+			end if
+			i = i + 1
+		end for
+	end for
+end function
+
+Scan_Site = function(metaLibrary,comp)
+	mems = metaxploit.scan(metaLibrary)
+	if not mems then return
+	for mem in mems
+		vulns = metaxploit.scan_address(metaLibrary,mem)
+		if not vulns then continue
+		vulnList = vulns.split("Unsafe check: ")
+		if not vulnList then continue
+		for vuln in vulnList
+			if vuln == vulns[0] then continue
+			vuln = vuln[vuln.indexOf("<b>")+3:vuln.indexOf("</b>")]
+			object = metaLibrary.overflow(mem,vuln)
+			if typeof(object) != "shell" then continue
+			target = object.host_computer.File("/var/system.log")
+			if not target then continue
+			if not target.has_permission("r") then continue
+
+			return object
+		end for
+	end for
+end function
+
+Download_Logs = function(obj,shell,comp)
+	obj.scp("/var/system.log","/root/Downloads",shell)
+end function
+currentPath = program_path.split("/")[:-1].join("/")
+metaxploit = include_lib("/lib/metaxploit.so")
+if not metaxploit then metaxploit = include_lib(currentPath+"/"+"metaxploit.so")
+if not metaxploit then exit("metaxploit.so not found")
+
+if params.len != 1 then exit("usage: getlogs [website list file path]")
+
+sitesFilePath = params[0]
+
+myShell = get_shell
+myComp = myShell.host_computer
+
+rServiceFolder = myComp.File("/root/ja"+"/"+"db"+"/"+"remote_service")
+if not rServiceFolder then exit("unable to find service exploit list file")
+
+rServiceFiles = rServiceFolder.get_files
+if not rServiceFiles then exit("unable to find service exploit files")
+
+sitesFile = myComp.File(sitesFilePath)
+if not sitesFile then sitesFile = myComp.File(currentPath+"/"+sitesFilePath)
+if not sitesFile then exit("website list file not found")
+
+sitesFileContent = sitesFile.get_content
+if not sitesFileContent then exit("website list file empty")
+
+sitesList = sitesFileContent.split("\n")
+if not sitesList then exit("no website list")
+
+for site in sitesList
+	
+	if site == "" then continue
+	
+	ip = nslookup(site)
+	if not is_valid_ip(ip) then continue
+	
+	netSession = metaxploit.net_use(ip,80)
+	if not netSession then continue
+
+	metalib = netSession.dump_lib
+	if not metalib then continue
+	
+	object = Hack_Site(metalib,rServiceFiles,myComp)
+
+	if not object then continue
+	//if not object then
+		//object = Scan_Site(metalib,myComp)
+		//if not object then continue
+	//end if
+	
+	Download_Logs(object,myShell)
+	
+	file = myComp.File("/root/Downloads/system.log")
+	if file then file.rename(site)
+	
+
+end for
+
+
+
+
