@@ -2,30 +2,32 @@
 //////////////////// Romote.src /////////////////////////////
 ////////////////////////////////////////////////////////////
 
-// ── Cmd wrappers (dispatch table entries — see commands.src) ─────
+// ── Cmd wrappers — each self-registers into CommandTable right after ─────
+// ── its own definition (see the CommandTable[...] line below it) ─────
 CmdTerm = function(inp)
     myShell.launch("/usr/bin/Terminal.exe")
 end function
+CommandTable["term"] = @CmdTerm
 
 CmdMail = function(inp)
     myShell.launch("/usr/bin/Mail.exe")
 end function
+CommandTable["mail"] = @CmdMail
 
 CmdBrowser = function(inp)
     myShell.launch("/usr/bin/Browser.exe")
 end function
+CommandTable["b"] = @CmdBrowser
 
 CmdFileExplorer = function(inp)
     myShell.launch("/usr/bin/FileExplorer.exe")
 end function
+CommandTable["file"] = @CmdFileExplorer
 
 CmdPwnlan = function(inp)
     PwnLan
 end function
-
-CmdLscan = function(inp)
-    LocalScan
-end function
+CommandTable["pwnlan"] = @CmdPwnlan
 
 CmdUpgrade = function(inp)
     if inp.len >= 2 and inp[1] == "-u" then
@@ -34,10 +36,12 @@ CmdUpgrade = function(inp)
         Upgrade(true)
     end if
 end function
+CommandTable["upgrade"] = @CmdUpgrade
 
 CmdUpdatelib = function(inp)
     UpdateLib()
 end function
+CommandTable["updatelib"] = @CmdUpdatelib
 
 CmdJump = function(inp)
     if inp.len == 2 and inp[1] == "--rshell" then
@@ -46,6 +50,7 @@ CmdJump = function(inp)
         Propagate(false)
     end if
 end function
+CommandTable["jump"] = @CmdJump
 
 c = {}
 c.red    = "<color=#CC2222>"       // crimson
@@ -298,11 +303,17 @@ PwnLan = function()
                         GETPERMS(obj)
                         results.push(lanIp + " " + portNum + " " + mem + " " + val)
                         grabbed = true
+                        EdbAdd(ml.lib_name, ml.version, mem, val, "shell", GetUserCtx(obj))
                     else if typeof(obj) == "computer" then
                         print(c.green + "    [+] computer: " + lanIp + "  " + mem + " " + val + c.ennd)
                         GETPERMS(obj)
                         results.push(lanIp + " " + portNum + " " + mem + " " + val)
                         grabbed = true
+                        EdbAdd(ml.lib_name, ml.version, mem, val, "computer", GetUserCtx(obj))
+                    else
+                        // record the miss too — same completeness as grab/scan
+                        EdbAdd(ml.lib_name, ml.version, mem, val, typeof(obj), "")
+                        if typeof(obj) == "firewall" then print("test: firewall disable returned")
                     end if
                 end for
             end for
@@ -322,92 +333,6 @@ PwnLan = function()
         end for
     end if
 end function
-
-// ── LocalScan ────────────────────────────────────────────────────
-LocalScan = function()
-    if typeof(object) != "shell" then
-        print(c.yellow + "<b>lscan: not holding remote shell" + c.ennd)
-        return
-    end if
-    comp = object.host_computer
-
-    // find writable path on target
-    writePath = null
-    for path in ["/home/guest", "/tmp", "/root"]
-        f = comp.File(path)
-        if f and f.has_permission("w") then
-            writePath = path
-            break
-        end if
-    end for
-    if not writePath then
-        print(c.yellow + "<b>lscan: no writable path on target" + c.ennd)
-        return
-    end if
-
-    // check ls binary exists locally
-    lsBin = myComp.File(currentPath + "/ls")
-    if not lsBin then
-        print(c.yellow + "<b>lscan: ls binary not found in " + currentPath + c.ennd)
-        print(c.grey + "  build ls.src locally first: build ls.src " + currentPath + c.ennd)
-        return
-    end if
-
-    // upload and run
-    print(c.orange + "Uploading scanner to " + writePath + " ..." + c.ennd)
-    myShell.scp(currentPath + "/ls", writePath, object)
-    binFile = comp.File(writePath + "/ls")
-    if not binFile then
-        print(c.yellow + "<b>lscan: upload failed" + c.ennd)
-        return
-    end if
-
-    print(c.orange + "Running on target hardware..." + c.ennd)
-    gco.lscanResults = null
-    object.launch(writePath + "/ls")
-    binFile.delete
-
-    if not gco.lscanResults then
-        print(c.yellow + "<b>lscan: no results returned" + c.ennd)
-        return
-    end if
-
-    // parse and display results
-    lines = gco.lscanResults.split(char(10))
-    shells = 0
-    files  = 0
-    comps  = 0
-    for line in lines
-        if line == "" then continue
-        parts = line.split(" ")
-        if parts.len < 4 then continue
-        libName = parts[0]
-        libVer  = parts[1]
-        mem     = parts[2]
-        val     = parts[3]
-        print(c.gold + libName + " " + libVer + c.ennd + "  " + c.orange + mem + "  " + val + c.ennd)
-        // attempt overflow to show what each exploit yields
-        ml = metaxploit.load("/lib/" + libName + ".so")
-        if not ml then continue
-        obj = ml.overflow(mem, val)
-        if typeof(obj) == "shell" then
-            print("  <b>shell   : " + c.yellow + obj + c.ennd)
-            shells = shells + 1
-            GETPERMS(obj)
-        end if
-        if typeof(obj) == "computer" then
-            print("  <b>computer: " + c.yellow + obj + c.ennd)
-            comps = comps + 1
-            GETPERMS(obj)
-        end if
-        if typeof(obj) == "file" then
-            print("  <b>file    : " + c.yellow + obj.name + c.ennd)
-            files = files + 1
-        end if
-    end for
-    print(char(10) + c.cyan + "lscan complete — shells:" + shells + "  files:" + files + "  computers:" + comps + c.ennd)
-end function
-
 
 
 // ── Upgrade ───────────────────────────────────────────────────────
