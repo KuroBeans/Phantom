@@ -96,7 +96,7 @@ These get uploaded and run *on a target*, not imported at startup:
 - **`netmap.src`** — pure recon LAN mapper (`netmap` command): open ports, kernel/firewall info per device, no attacking.
 - **`getlogs.src`** — pulls readable log/credential data off a target.
 
-## Persisted files (auto-created next to phantom's files)
+## Persisted files (auto-created next to phantom's files, double check thatt the files have been created, you have to manually do it until i debug that.)
 
 | File | Purpose |
 |---|---|
