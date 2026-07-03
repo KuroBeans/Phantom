@@ -1,278 +1,109 @@
-# phantom v1.2
+# phantom
 
-A comprehensive multi-file exploitation and automation framework for Grey Hack. Phantom provides integrated network reconnaissance, vulnerability scanning, privilege escalation, and post-exploitation tools in a unified command-line environment.
+A GreyScript hacking toolkit for [Grey Hack](https://store.steampowered.com/app/605230/Grey_Hack/) — a custom shell that layers piping, variables, aliases, macros, an object stack, and a persistent exploit database on top of the game's scripting API, plus a large set of recon/exploitation commands for both local and remote targets.
 
-## Features
+Architecturally, each command is self-registering: a topic file (`ops.src`, `hack.src`, etc.) defines `CmdFoo = function(inp) ... end function` and immediately follows it with `CommandTable["foo"] = @CmdFoo`. Adding or finding a command is a one-file, one-location affair — there's no separate manifest to keep in sync.
 
-- **Network Reconnaissance**: LAN enumeration, port scanning, IP enumeration with port filtering
-- **Vulnerability Scanning**: Metaxploit integration for library scanning and exploit discovery
-- **Exploitation**: Automated shell and computer object acquisition via known and discovered exploits
-- **Privilege Escalation**: ChainSaw integration for automatic root shell acquisition; dictionary-based escalation via `ar`
-- **Password Cracking**: Markov chain-based password generation with rainbow table support
-- **Remote Operations**: Full file system access (ls, cat, cp, mv, rm, etc.) on compromised targets
-- **Stack Management**: Multi-object juggling with push/pop/swap operations
-- **Post-Exploitation**: Log corruption, user management, process killing, file enumeration
-- **Macro System**: Extensible command macros for automation workflows
+## Requirements
+
+- Grey Hack, with `metaxploit.so` and `crypto.so` available (either at `/lib/` or alongside phantom's own files).
+- A computer with enough disk space for phantom's `.src` files plus whatever `db.txt`/`deadlibs.txt`/`aliases.txt` grow to over a session.
 
 ## Installation
 
-### Requirements
-
-- Grey Hack (game)... Just incase you didn't know.
-
-### Quick Start
-
-1. **Create phantom directory** on your local machine:
-   ```
-   /root/ai/pt
-   ```
-
-2. **Download or copy phantom modules** to this directory:
-    **Mark all src files as importable when compiling to /root/ai/pt**
-   - `phantom.src` (main entry point)
-   - 
-   - `macro.src` (macro system)
-   - `macrosys.src` (macro dispatch)
-   - `ops.src` (file operations, reconnaissance, exploitation)
-   - `hack.src` (hacking primitives)
-   - `recon.src` (network reconnaissance)
-   - `chainsaw.src` (Chainsaw)
-   - `commands.src` (Command dispatcher)
-   - `stack.src`(for the... sstack)
-   - `var.src`(more macro shit)
-
-4. **Launch phantom**:
-   ```
-   i. make another dir /root/ai/tp
-   ii. compile ar, ls, wb, and phantom into the tp folder
-   
-   ```
-
-## Usage
-
-### Basic Commands
-
-#### Local File System
-```
-ls [opt:-l -a] [opt:path]     # List directory
-cd [path]                      # Change directory
-cat [file]                     # Read file
-cp [src] [dst]                 # Copy
-mv [src] [dst]                 # Move
-rm [opt:-r] [path]             # Delete
-mkdir [path]                   # Create directory
-chmod [opt:-R] [perms] [path]  # Change permissions
-```
-
-#### Network Reconnaissance
-```
-nmap [ip/pt/lt]                # Network map (show open ports)
-ping [ip/pt/lt/bt]             # Test connectivity
-whois [public-ip]              # Get IP info
-ifconfig                       # Show local network config
-set [ip] [opt:-b]              # Set target (public/local/bounce)
-```
-
-#### Hacking Workflow
-
-1. **Scan for vulnerabilities**:
-   ```
-   scan [ip] [port]
-   ```
-   This scans a target's exposed library for buffer overflow vulnerabilities.
-
-2. **Grab a shell** (if vulnerabilities found):
-   ```
-   grab [ip] [port] [mem] [val]
-   or keep it simple and if you want a shell just type
-   grab [ip] [port] 
-   ```
-   Exploits a discovered vulnerability to obtain shell/computer object.
-
-3. **Escalate to root** (if you have guest shell):
-   ```
-   autoroot
-   ```
-   Uses ChainSaw framework to automatically escalate to root.
-   ```
-    ar
-   ```
-   Uses Dictonary Attack(recommend using chainsaw though)
-
-5. **Enumerate compromised system**:
-   ```
-   enum [-l] [-r]
-   ```
-   Dumps filesystem and creates local archive of target.
-
-6. **Sweep LAN** (from root shell):
-   ```
-   wstack
-   ```
-   Bounces across local network, discovers & pushes all devices to stack.
-
-### Object Stack
-
-Manage multiple shells/computers:
-```
-push                  # Push current object onto stack
-pop                   # Pop and set as active
-stack                 # List all stacked objects
-swap [opt:index]      # Swap active with stack entry
-drop [-l] [-r]        # Drop active/local object
-```
-
-### Password Cracking
-
-Build a Markov chain-based rainbow table:
-```
-buildrt [order] [minLen] [maxLen]   # Build in memory (default: 3 3 12)
-rtgen [order] [minLen] [maxLen]     # Build and write to ~/phantom/rt/
-crack [hash]                         # Crack a hash using table
-```
-(work in progress)
-
-### Macros
-
-Define and run automated command sequences:
-```
-mac list                    # List all available macros
-mac show [name]             # Show macro code
-mac [name]                  # Run macro from /root/ai/mac/
-macref                      # Show a quick ref on how to make macros
-```
-
-### Remote Operations
-
-When holding a remote shell, use `r` prefix:
-```
-rls [path]                  # Remote ls
-rcat [file]                 # Remote cat
-rcp [src] [dst]             # Remote copy
-rmv [src] [dst]             # Remote move
-rrm [opt:-r] [path]         # Remote delete
-rsearch [keyword]           # Remote search
-rgrep [pattern] [path]      # Remote grep
-rfind [pattern] [path]      # Remote find
-```
-
-### Help
+GreyScript's `import_code` requires a literal path known when the script is loaded — it can't take a computed or relative path. Because of that, **phantom must live at `/root/ai/pt/`** on the machine you run it from, since that's the path hardcoded into `phantom.src`'s imports:
 
 ```
-help                  # Quick reference
-help -l               # Local commands
-help -n               # Network commands
-help -h               # Hacking commands
-help -r               # Remote commands
-help -a               # All commands
+import_code("/root/ai/pt/macro.src")
+import_code("/root/ai/pt/core.src")
+import_code("/root/ai/pt/recon.src")
+import_code("/root/ai/pt/hack.src")
+import_code("/root/ai/pt/ops.src")
+import_code("/root/ai/pt/remote.src")
+import_code("/root/ai/pt/chainsaw.src")
+import_code("/root/ai/pt/stack.src")
+import_code("/root/ai/pt/vars.src")
+import_code("/root/ai/pt/misc.src")
 ```
 
-## Workflow Examples
+If you want to install somewhere else, edit those ten lines to match. (Note: a handful of comments elsewhere in the codebase reference `/root/ai/tp/` instead of `/root/ai/pt/` when suggesting `build` commands for payloads — that's just an inconsistency in the comment text, not a functional requirement. `build` takes whatever path you actually type, so use the same path you installed phantom at.)
 
-### Single Target Exploitation
+**Steps:**
 
-```
-set 203.0.113.45           # Set public target
-nmap pt                    # Scan for open ports
-scan pt 80                 # Scan port 80 for vulns
-grab pt 80 [mem] [val]     # Exploit vulnerability
-whoami                     # Check current user (guest)
-autoroota                   # Escalate to root
-enum -r                    # Dump filesystem
-```
+1. Copy every `.src` file at the repo root (`phantom.src`, `core.src`, `ops.src`, `hack.src`, `recon.src`, `remote.src`, `chainsaw.src`, `stack.src`, `vars.src`, `misc.src`, `macro.src`) into `/root/ai/pt/` on your Grey Hack machine.
+2. Copy the `data/` folder (`pregens.src`, `samples.src`) alongside them — `chainsaw.src` loads these as ChainSaw's password wordlists, falling back to a smaller built-in list if they're missing.
+3. Make sure `metaxploit.so` and `crypto.so` are reachable, either in `/lib/` or copied into `/root/ai/pt/` next to `phantom.src`.
+4. Build `phantom.src` in-game (`build /root/ai/pt/phantom.src /root/ai/pt`) to produce the runnable `phantom` binary.
+5. Copy the `payloads/` folder in too (`getlogs.src`, `libscan.src`, `netmap.src`, `slb.src`, `wsx.src`). These aren't imported at startup — they're separate scripts that get uploaded to remote targets on demand and only need building the first time each is actually used (phantom prints the exact `build` command to run if it can't find a compiled copy).
 
-### LAN Pivot & Sweep
+## First run
 
 ```
-grab pt 80 [mem] [val]     # Get router shell
-wstack                     # Sweep LAN, push all devices to stack
-ar                         # Escalate first stack entry to root
-astack                     # Escalate all shells on stack to root
-stackgrep [pattern]        # Search all compromised systems
+./phantom
 ```
 
-### Anonymous Proxy Chain
+On startup phantom loads `metaxploit.so`/`crypto.so`, auto-creates/loads `db.txt` (exploit database), `deadlibs.txt` (libs confirmed to have nothing exploitable), and `aliases.txt` (persisted command aliases) if present in the same folder, then drops you at a prompt. Type `help` for the current command list (`help -a` for everything, or `-l`/`-n`/`-h`/`-r` for local/network/hacking/remote subsets).
 
-```
-proxy 3                    # Build 3-hop proxy chain
-scan pt 0                  # Scan target through chain
-grab pt 0 [mem] [val]      # Exploit through chain
-proxyclear                 # Drop chain + cleanup
-```
+Headless mode: `phantom --rshell [port]` installs and starts an rshell daemon on the local machine instead of dropping into the interactive shell (defaults to port 1222).
 
-## Exploit Database
+## Core concepts
 
-Phantom auto-populates `db.txt` with successful exploits as they're discovered:
+**Piping.** `scan pt 0 | grab pt 0` — pipe a command's result into the next. `cmd |> other` queues `other` to run as a separate stage afterward, once the first cmd completes (including anything it queued via macros/foreach).
 
-```
-libname|version|memory_address|value
-libhttp.so|1.0|0x40000000|0xdeadbeef
-```
+**Clips (`@var`).** Store a result by ending a command with a bare `@name` (e.g. `randip @ip`), then reference it later with `@ip`. `@ip.len` gives its length (or comma-count for a list-like string). `@o key` reads any top-level custom-object index directly (not just clips). Clips persist across restarts via the game's custom object.
 
-When you run `grab` without mem/val arguments, phantom checks this database first for known exploits.
+**Local vs. remote state.** `lObject`/`myShell`/`myComp` track what you're standing on locally; `object`/`remotePath` track a held remote shell/computer. Most commands are either local (`ls`, `cd`, `ps`) or remote (`rls`, `rcd`, `rps`), with the remote ones acting on whatever's currently held in `object`.
 
-## Configuration
+**The stack.** `push`/`pop`/`stack`/`swap` let you juggle multiple shell/computer objects at once — useful when a scan turns up several targets and you don't want to lose the earlier ones.
 
-### Custom Wordlists
+**Aliases.** `alias name cmd args...` defines a shortcut; `alias -d name` removes it. Persisted to `aliases.txt`.
 
-Place `.txt` or `.lst` files in the phantom folder. They'll be automatically imported when building a rainbow table:
+**Macros.** `.bat`-style scripts stored under `mac`'s macro folder, supporting `if`/`while`/`for`/`switch`/`try`/`catch`/inline `func`/`endfunc` blocks, run via `mac <name>`.
 
-```
-passwords.txt           # One password per line or space-separated
-common-words.lst
-leaked-db.txt
-```
+**The exploit database (`db.txt`).** Every overflow attempt phantom makes — success or failure, from any command — gets recorded per exact lib+version+mem+val, so a repeat encounter with the same lib+version can skip straight to known-good candidates instead of re-scanning from scratch. `edb` inspects/manages it directly.
 
-### Metaxploit Library
+## Command reference
 
-Ensure `metaxploit.so` is available:
-- Copy from Grey Hack's `/lib/metaxploit.so`
-- Or symlink: `ln -s /lib/metaxploit.so ~/phantom/metaxploit.so`
+Run `help -a` in phantom for the live, always-current list. Grouped summary:
 
-## Troubleshooting
+### Local
+`ls`, `tree`, `cd`, `cat`, `cp`, `mv`, `rm`, `mkdir`, `touch`, `chmod`, `chown`, `chgrp`, `search`, `ps`, `kill`, `passwd`, `useradd`, `userdel`, `pwd`, `whoami`, `clear`, `decipher`, `cover`, `corlog`, `escalate`, `terminal`, `randip`, `drop`
 
-**"metaxploit.so not available"**
-- Ensure the library is in `/lib/` or in the phantom folder
+### Network / recon
+`nmap`, `ping`, `nslookup`, `whois`, `whoismail`, `ifconfig`, `set`, `unset`, `ssh`, `scp`, `routerdata`, `proxy`, `proxystatus`, `proxyclear`, `netmap`, `hacklan`, `lanenum`, `ipenum`
 
-**"no vulnerabilities found" after scan**
-- Target library may be patched
-- Try other ports or targets
-- Check if db.txt has entries for this lib version
+### Hacking
+`edb`, `scan`, `scanlan` (scan/attack whatever's bound to an ip:port), `scanlib` (scan/attack a *named* lib on a held shell's target, with an optional LAN-ip inject), `grab`, `exploit` (interactive candidate picker), `getroot`, `autoroot`/`ar` (dictionary attack; `-l` for local), `enum`, `harvest`, `wifi`, `siphon`, `wstack`, `cascade`, `pwnlan`, `lscan`, `crack`, `buildrt`, `rtgen`, `jump`, `plant`, `rshell`, `upgrade`, `updatelib`, `chainsaw` (Markov/pregen password cracker — `run`/`load`/`deploy`)
 
-**"autoroot failed"**
-- Ensure you have a guest shell (not root yet)
-- Verify rainbow table is built: `buildrt` or `buildrt 3 3 14` for larger set
-- Check that `ar` binary exists in phantom folder
+### Remote (act on the held object)
+`rls`, `rtree`, `rcd`, `rcat`, `rcp`, `rmv`, `rrm`, `rmkdir`, `rtouch`, `rchmod`, `rchown`, `rchgrp`, `rsearch`, `rps`, `rkill`, `rpasswd`, `ruseradd`, `ruserdel`, `rcorlog`, `rterminal`, `rdecipher`, `rgrep`, `rfind`, `term`, `mail`, `b` (browser), `file` (file explorer)
 
-**Connection refused / "no net session"**
-- Verify target IP is correct: `ping [ip]`
-- Confirm port is open: `nmap [ip]`
-- Check if target is behind firewall
+### Stack
+`push`, `pop`, `stack`, `swap`, `stackrun`, `stackpick`, `stackfor`, `stacktree`, `stacklog`, `stackgrep`, `stackfind`, `astack`, `autoharvest`, `harvestgrep`, `psgrep`, `treegrep`
 
-## Tips & Tricks
+### Variables, scripting & misc
+`clip`, `inc`, `dec`, `math`, `alias`, `ask`, `echo`, `log`, `foreach`, `mac`, `call`/`macall`, `exec`, `code`, `plantstack`, `harveststack`, `corlogstack`, `siphon`, `rlan`, `rpub`, `ports`, `p`, `pre`, `sleep`, `pause`, `exit`/`quit`, `imap` (target info)
 
-- **Use variables**: `nslookup example.com @target_ip` clips result to `@target_ip` for reuse
-- **Pipe results**: `randip 5 | ipenum 22 @ssh_ips` generates 5 IPs, filters by SSH port
-- **Stack juggling**: Push multiple rooted shells, then `astack` to escalate all at once
-- **Silent mode**: Use `nmap` in a macro to disable interactive prompts
-- **Log cleanup**: `corlog` corrupts `system.log` after successful exploitation
-- **Grep across stack**: `stackgrep password /home` searches all compromised systems at once
+`./name` launches a local binary; `r./name` launches one on the held remote shell.
 
-## Performance Notes
+## Payload scripts (`payloads/`)
 
-- **Rainbow table generation** scales with order and length; default (order=3, min=3, max=12) generates ~48k passwords
-- **LAN enumeration** uses recursive router traversal; large networks may take time
-- **Stack operations** are fast; phantom can handle 20+ objects
-- **Macro resolution** supports nested `$(call ...)` syntax for composition
+These get uploaded and run *on a target*, not imported at startup:
 
-## License
+- **`slb.src`** — LAN-bounce scanner used by `scanlan` against LAN ips: nets into a target from inside its own segment, checks known db exploits first, then falls back to a full scan.
+- **`libscan.src`** — used by `scanlib`: loads a named lib directly from wherever it's launched (no `net_use` needed), same known-db-first shortcut, with an optional LAN-ip inject to bounce onward.
+- **`wsx.src`** — used by `wstack`'s remote mode: bounces a chosen (or default weak) lib against every LAN ip discovered from the target's perspective.
+- **`netmap.src`** — pure recon LAN mapper (`netmap` command): open ports, kernel/firewall info per device, no attacking.
+- **`getlogs.src`** — pulls readable log/credential data off a target.
 
-## Author
+## Persisted files (auto-created next to phantom's files)
 
-KuroBeans
+| File | Purpose |
+|---|---|
+| `db.txt` | Exploit database — lib, version, mem, val, result type, user context for every attempt ever made. |
+| `deadlibs.txt` | Lib+version combos confirmed to have zero exploitable vulnerabilities — skips the scan/decode pass next time. |
+| `aliases.txt` | Persisted `alias` definitions. |
 
----
+## Notes
 
-**Version**: 1.2  
-**Last Updated**: 2024  
-**Requires**: Grey Hack, GreyScript interpreter
+- `wstack`/`slb`/`libscan`/`netmap` all upload a compiled binary to the target and leave it in `/home/guest` afterward for reuse — there's no cleanup command yet, so treat any pivoted-through host as "dirty."
