@@ -16,6 +16,7 @@ CmdPush = function(inp)
         end if
     end if
 end function
+CommandTable["push"] = @CmdPush
 
 // ── pop ──────────────────────────────────────────────────────────
 CmdPop = function(inp)
@@ -28,6 +29,7 @@ CmdPop = function(inp)
         GETPERMS(globals.object)
     end if
 end function
+CommandTable["pop"] = @CmdPop
 
 // ── stack ────────────────────────────────────────────────────────
 CmdStack = function(inp)
@@ -54,7 +56,9 @@ CmdStack = function(inp)
                 pub  = obj.public_ip
                 lan  = obj.local_ip
                 name = obj.get_name
-                if IsRoot(obj) then
+                // IsRoot hardcodes typeof(x)=="shell" and always returns
+                // false otherwise — GetUserCtx handles computers too
+                if GetUserCtx(obj) == "root" then
                     priv = c.lime + "<b>ROOT</b>" + c.ennd
                 else
                     priv = c.grey + "guest" + c.ennd
@@ -67,6 +71,7 @@ CmdStack = function(inp)
         end for
     end if
 end function
+CommandTable["stack"] = @CmdStack
 
 // ── swap ─────────────────────────────────────────────────────────
 CmdSwap = function(inp)
@@ -97,6 +102,7 @@ CmdSwap = function(inp)
         GETPERMS(globals.object)
     end if
 end function
+CommandTable["swap"] = @CmdSwap
 
 // ── stackrun ─────────────────────────────────────────────────────
 CmdStackrun = function(inp)
@@ -519,6 +525,7 @@ CmdStackrun = function(inp)
         print(c.cyan + "stackrun complete across " + objectStack.len + " object(s)" + c.ennd)
     end if
 end function
+CommandTable["stackrun"] = @CmdStackrun
 
 // ── stackpick ────────────────────────────────────────────────────
 CmdStackpick = function(inp)
@@ -552,6 +559,7 @@ CmdStackpick = function(inp)
         end if
     end if
 end function
+CommandTable["stackpick"] = @CmdStackpick
 
 // ── stackfor ─────────────────────────────────────────────────────
 CmdStackfor = function(inp)
@@ -591,6 +599,7 @@ CmdStackfor = function(inp)
         end if
     end if
 end function
+CommandTable["stackfor"] = @CmdStackfor
 
 // ── stacktree ────────────────────────────────────────────────────
 CmdStacktree = function(inp)
@@ -653,6 +662,7 @@ CmdStacktree = function(inp)
         end if
     end if
 end function
+CommandTable["stacktree"] = @CmdStacktree
 
 // ── stacklog ─────────────────────────────────────────────────────
 CmdStacklog = function(inp)
@@ -690,7 +700,10 @@ CmdStacklog = function(inp)
                 else if typeof(obj) == "computer" then
                     comp2 = obj
                     rootStr = "guest"
-                    if IsRoot(obj) then rootStr = "root"
+                    // IsRoot hardcodes typeof(x)=="shell" and always
+                    // returns false otherwise — GetUserCtx handles
+                    // computers too
+                    if GetUserCtx(obj) == "root" then rootStr = "root"
                     logLines = logLines + "[" + i + "] " + rootStr + " computer  pub:" + obj.public_ip + "  lan:" + obj.local_ip + char(10)
                 end if
                 if comp2 != null then
@@ -727,6 +740,7 @@ CmdStacklog = function(inp)
         end if
     end if
 end function
+CommandTable["stacklog"] = @CmdStacklog
 
 // ── autoharvest ──────────────────────────────────────────────────
 CmdAutoharvest = function(inp)
@@ -738,6 +752,7 @@ CmdAutoharvest = function(inp)
         AutoHarvest(1, 5)
     end if
 end function
+CommandTable["autoharvest"] = @CmdAutoharvest
 
 // ── harvestgrep ──────────────────────────────────────────────────
 CmdHarvestgrep = function(inp)
@@ -778,6 +793,7 @@ CmdHarvestgrep = function(inp)
         end if
     end if
 end function
+CommandTable["harvestgrep"] = @CmdHarvestgrep
 
 // ── psgrep ───────────────────────────────────────────────────────
 CmdPsgrep = function(inp)
@@ -818,6 +834,7 @@ CmdPsgrep = function(inp)
         end if
     end if
 end function
+CommandTable["psgrep"] = @CmdPsgrep
 
 // ── treegrep ─────────────────────────────────────────────────────
 CmdTreegrep = function(inp)
@@ -858,3 +875,4 @@ CmdTreegrep = function(inp)
         end if
     end if
 end function
+CommandTable["treegrep"] = @CmdTreegrep
