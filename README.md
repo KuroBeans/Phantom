@@ -31,7 +31,7 @@ If you want to install somewhere else, edit those ten lines to match. (Note: a h
 **Steps:**
 
 1. Copy every `.src` file at the repo root (`phantom.src`, `core.src`, `ops.src`, `hack.src`, `recon.src`, `remote.src`, `chainsaw.src`, `stack.src`, `vars.src`, `misc.src`, `macro.src`) into `/root/ai/pt/` on your Grey Hack machine.
-2. Copy the `data/` folder (`pregens.src`, `samples.src`) alongside them — `chainsaw.src` loads these as ChainSaw's password wordlists, falling back to a smaller built-in list if they're missing.
+2. Make a Dir called `/data/` and in that folder put (`pregens.src`, `samples.src`) alongside them — `chainsaw.src` loads these as ChainSaw's password wordlists, falling back to a smaller built-in list if they're missing.
 3. Make sure `metaxploit.so` and `crypto.so` are reachable, either in `/lib/` or copied into `/root/ai/pt/` next to `phantom.src`.
 4. Build `phantom.src` in-game (`build /root/ai/pt/phantom.src /root/ai/pt`) to produce the runnable `phantom` binary.
 5. Copy the `payloads/` folder in too (`getlogs.src`, `libscan.src`, `netmap.src`, `slb.src`, `wsx.src`). These aren't imported at startup — they're separate scripts that get uploaded to remote targets on demand and only need building the first time each is actually used (phantom prints the exact `build` command to run if it can't find a compiled copy).
