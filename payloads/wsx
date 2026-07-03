@@ -1,15 +1,18 @@
 // wsx.src  |  wstack bounce helper  |  runs ON target router
 // Build: build /root/ai/tp/wsx.src /root/ai/tp
 //
-// Default libs (init.so/libhttp.so) — no lib param given: uses the
-// known-good hardcoded exploit signature directly (0x1F8F7708/dexer,
-// 0x1F000FB5/length fallback). Fast, since we already know these
-// work against those two specific libs.
+// gco.edb (optional) — db.txt-known mem/val pairs, same shortcut
+// slb.src/libscan.src already get. Checked first for whichever lib
+// ends up loaded (custom or default) before falling back to either
+// the hardcoded weaklib signature or a full scan/decode.
 //
-// Custom lib (wstack [libname] / wstack -l [libname]) — no known
-// signature for an arbitrary lib, so this scans for real instead
-// (mx.scan/scan_address, same decode logic slb.src uses) and tries
-// every decoded candidate.
+// Default libs (init.so/libhttp.so) — no lib param given: tries
+// db-known pairs first, then the known-good hardcoded exploit
+// signature (0x1F8F7708/dexer, 0x1F000FB5/length fallback).
+//
+// Custom lib (wstack [libname] / wstack -l [libname]) — tries
+// db-known pairs first, then scans for real if none exist/pan out
+// (mx.scan/scan_address, same decode logic slb.src uses).
 //
 // Either way, the winning mem/val gets bounced at each discovered
 // LAN ip via overflow's 3rd arg — never net_use()-ing the target
@@ -24,6 +27,9 @@ gco = get_custom_object
 // happened to reset these before every launch — not self-defending.
 gco.wsObjects = []
 gco.wsCount   = 0
+gco.wsResults = null
+gco.wsLibName = ""
+gco.wsLibVer  = ""
 
 // confirmed: /lib/metaxploit.so is NOT reliably present on target
 // machines — the caller uploads a copy alongside the binary, so
@@ -41,32 +47,57 @@ if not gco.hasIndex("wsIPs") or not gco.wsIPs then
 end if
 ips = gco.wsIPs.split(",")
 objs = []
+allResults = []
+
+KnownPairsFor = function(libName, libVer)
+    out = []
+    if gco.hasIndex("edb") and gco.edb then
+        for e in gco.edb
+            exVer = ""
+            if e.hasIndex("ver") then exVer = e["ver"]
+            if e["lib"] == libName and exVer == libVer then
+                out.push([e["mem"], e["val"]])
+            end if
+        end for
+    end if
+    return out
+end function
 
 if gco.hasIndex("wsLib") and gco.wsLib != "" then
-    // custom lib requested — no known signature, scan for real
+    // custom lib requested
     ml = metaxploit.load("/lib/" + gco.wsLib)
     if not ml then ml = metaxploit.load(gco.wsLib)
     if not ml then
         gco.wsDebug = "lib not found: " + gco.wsLib
         exit
     end if
+    gco.wsLibName = ml.lib_name
+    gco.wsLibVer  = ml.version
 
-    mems = metaxploit.scan(ml)
     candidates = []
-    if mems then
-        for mem in mems
-            raw = metaxploit.scan_address(ml, mem)
-            addrs = raw.split("Unsafe check: ")
-            for addr in addrs
-                if addr == addrs[0] then continue
-                p1 = addr.indexOf("<b>")
-                p2 = addr.indexOf("</b>")
-                if p1 == null or p2 == null then continue
-                val = addr[p1+3:p2]
-                if val == "" then continue
-                candidates.push({"mem": mem, "val": val})
+    knownPairs = KnownPairsFor(ml.lib_name, ml.version)
+    for pair in knownPairs
+        candidates.push({"mem": pair[0], "val": pair[1]})
+    end for
+
+    // no known db entries — scan for real instead
+    if candidates.len == 0 then
+        mems = metaxploit.scan(ml)
+        if mems then
+            for mem in mems
+                raw = metaxploit.scan_address(ml, mem)
+                addrs = raw.split("Unsafe check: ")
+                for addr in addrs
+                    if addr == addrs[0] then continue
+                    p1 = addr.indexOf("<b>")
+                    p2 = addr.indexOf("</b>")
+                    if p1 == null or p2 == null then continue
+                    val = addr[p1+3:p2]
+                    if val == "" then continue
+                    candidates.push({"mem": mem, "val": val})
+                end for
             end for
-        end for
+        end if
     end if
 
     if candidates.len == 0 then
@@ -78,26 +109,48 @@ if gco.hasIndex("wsLib") and gco.wsLib != "" then
     for lanIp in ips
         for cand in candidates
             obj = ml.overflow(cand.mem, cand.val, lanIp)
-            if typeof(obj) == "computer" or typeof(obj) == "shell" then
+            t = typeof(obj)
+            allResults.push(lanIp + char(3) + cand.mem + char(3) + cand.val + char(3) + t)
+            if t == "computer" or t == "shell" then
                 objs.push(obj)
-                gco.wsDebug = gco.wsDebug + " | got " + typeof(obj) + " on " + lanIp
+                gco.wsDebug = gco.wsDebug + " | got " + t + " on " + lanIp
                 break
             end if
         end for
     end for
 else
-    // default weak libs — known-good signature, try it directly
+    // default weak libs
     ml = metaxploit.load("/lib/init.so")
     if ml == null then ml = metaxploit.load("/lib/libhttp.so")
     if not ml then
         gco.wsDebug = "no weaklib found"
         exit
     end if
+    gco.wsLibName = ml.lib_name
+    gco.wsLibVer  = ml.version
+
+    knownPairs = KnownPairsFor(ml.lib_name, ml.version)
 
     gco.wsDebug = "scanning " + ips.len + " ip(s)..."
     for lanIp in ips
-        obj = ml.overflow("0x1F8F7708", "dexer", lanIp)
-        if not obj then obj = ml.overflow("0x1F000FB5", "length", lanIp)
+        obj = null
+        for pair in knownPairs
+            obj = ml.overflow(pair[0], pair[1], lanIp)
+            t = typeof(obj)
+            allResults.push(lanIp + char(3) + pair[0] + char(3) + pair[1] + char(3) + t)
+            if t == "computer" or t == "shell" then break
+            obj = null
+        end for
+        if not obj then
+            obj = ml.overflow("0x1F8F7708", "dexer", lanIp)
+            t = typeof(obj)
+            allResults.push(lanIp + char(3) + "0x1F8F7708" + char(3) + "dexer" + char(3) + t)
+            if not obj then
+                obj = ml.overflow("0x1F000FB5", "length", lanIp)
+                t = typeof(obj)
+                allResults.push(lanIp + char(3) + "0x1F000FB5" + char(3) + "length" + char(3) + t)
+            end if
+        end if
         if typeof(obj) == "computer" or typeof(obj) == "shell" then
             objs.push(obj)
             gco.wsDebug = gco.wsDebug + " | got " + typeof(obj) + " on " + lanIp
@@ -107,4 +160,5 @@ end if
 
 gco.wsObjects = objs
 gco.wsCount   = objs.len
+gco.wsResults = allResults.join(char(2))
 gco.wsDebug   = gco.wsDebug + " — done: " + objs.len + " found"
