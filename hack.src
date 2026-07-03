@@ -2,7 +2,8 @@
 //////////////////////// Hack.src /////////////////////////
 ///////////////////////////////////////////////////////////
 
-// ── Cmd wrappers (dispatch table entries — see commands.src) ─────
+// ── Cmd wrappers — each self-registers into CommandTable right after ─────
+// ── its own definition (see the CommandTable[...] line below it) ─────
 // NOTE: the old inline dispatcher called WStack(true) / WStack(false)
 // — a single boolean — even though WStack's signature is
 // WStack(inp, localMode) and local mode indexes inp[0] for a lib
@@ -11,19 +12,88 @@
 // inp[0]). This wrapper passes inp[1:] through so WStack gets a
 // real argument list either way — flagging in case the old
 // behavior was somehow relied upon.
+CmdInfo = function(inp)
+    if inp.len == 2 then
+        TargetInfo(inp[1])
+    else
+        print("<b>Usage: info [ip]")
+        print(c.grey + "  router kernel, firewall rules, open ports for ip — recon only, no attacking" + c.ennd)
+        print(c.grey + "  accepts pt/lt, or a piped ip: randip | info @p" + c.ennd)
+    end if
+end function
+CommandTable["imap"] = @CmdInfo
 CmdWstack = function(inp)
-    if inp.len == 2 and inp[1] == "-l" then
-        WStack(inp[1:], true)
+    if inp.len >= 2 and inp[1] == "-l" then
+        WStack(inp[2:], true)
     else
         WStack(inp[1:], false)
     end if
 end function
+CommandTable["wstack"] = @CmdWstack
 
 CmdCascade = function(inp)
     Cascade()
 end function
+CommandTable["cascade"] = @CmdCascade
 
-// ── ScanLib (wrapper) ─────────────────────────────────────────
+CmdScanlan = function(inp)
+    acceptComputer = inp.indexOf("-c") != null
+    args = []
+    for a in inp[1:]
+        if a != "-c" then args.push(a)
+    end for
+    if args.len == 2 then
+        ScanLan(args[0], args[1], acceptComputer)
+    else
+        print("<b>Usage: scanlan [ip] [port] [opt:-c]")
+        print(c.grey + "  direct ip: recon only — decodes candidates, caches for grab, doesn't touch the target" + c.ennd)
+        print(c.grey + "  LAN ip: bounces + attempts overflow in the same run (like scan), auto-pivoting as needed" + c.ennd)
+        print(c.grey + "  -c   accept computer objects (not just shells) — LAN targets only" + c.ennd)
+    end if
+end function
+CommandTable["scanlan"] = @CmdScanlan
+
+CmdScanlib = function(inp)
+    acceptComputer = inp.indexOf("-c") != null
+    args = []
+    for a in inp[1:]
+        if a != "-c" then args.push(a)
+    end for
+    if args.len == 1 then
+        LibScan(args[0], null, acceptComputer)
+    else if args.len == 2 then
+        LibScan(args[0], args[1], acceptComputer)
+    else
+        print("<b>Usage: scanlib [libname] [opt:lan-ip] [opt:-c]")
+        print(c.grey + "  scans a NAMED lib on the machine you're holding a shell on — you pick the" + c.ennd)
+        print(c.grey + "  lib, not whatever's auto-bound to a port (that's scanlan/scan's job)" + c.ennd)
+        print(c.grey + "  checks db.txt-known exploits first, same shortcut scanlan/grab already get" + c.ennd)
+        print(c.grey + "  lan-ip: optional — used as the overflow's 3rd (inject) arg to bounce onto" + c.ennd)
+        print(c.grey + "  that LAN device instead of attempting a plain 2-arg overflow here" + c.ennd)
+        print(c.grey + "  -c   accept computer objects (not just shells)" + c.ennd)
+    end if
+end function
+CommandTable["scanlib"] = @CmdScanlib
+
+CmdExploit = function(inp)
+    acceptComputer = inp.indexOf("-c") != null
+    args = []
+    for a in inp[1:]
+        if a != "-c" then args.push(a)
+    end for
+    if args.len == 2 then
+        Exploit(args[0], args[1], acceptComputer)
+    else
+        print("<b>Usage: exploit [ip] [port] [opt:-c]")
+        print(c.grey + "  lists decoded exploit candidates for ip:port (scans first if none cached)" + c.ennd)
+        print(c.grey + "  pick one by number, or 0 to enter a custom mem/val, then an optional inject value" + c.ennd)
+        print(c.grey + "  direct ips only — not supported for LAN targets yet" + c.ennd)
+        print(c.grey + "  -c   accept computer objects (not just shells)" + c.ennd)
+    end if
+end function
+CommandTable["exploit"] = @CmdExploit
+
+// ── ScanLan (wrapper) ─────────────────────────────────────────
 // Scan a target's libraries without grabbing yet
 WStack = function(inp, localMode)
     if localMode then
@@ -33,7 +103,7 @@ WStack = function(inp, localMode)
         if typeof(object) == "computer" then targetIp = object.public_ip
         print(c.orange + "WStack local mode — discovering all LAN devices..." + c.ennd)
         libArg = "init.so"
-        if inp.len > 0 and inp[0] != "" and inp[0] != "-l" then libArg = inp[0]
+        if inp.len > 0 and inp[0] != "" then libArg = inp[0]
         ml = metaxploit.load("/lib/" + libArg)
         if not ml then ml = metaxploit.load("/lib/libhttp.so")
         if not ml then
@@ -100,11 +170,11 @@ WStack = function(inp, localMode)
             print(c.orange + "  bouncing to " + lanIp + " ..." + c.ennd)
             obj = ml.overflow("0x1F8F7708", "dexer", lanIp)
 			if obj == null then obj == ml.overflow("0x1F000FB5", "length", lanip)
-			if not obj then 
+			if not obj then
 				return print(c.yellow + "Use Lib init.so or libhttp.so")
 			end if
-			
-				
+
+
             if typeof(obj) != "computer" then continue
             objectStack.push(obj)
             pushed = pushed + 1
@@ -133,6 +203,8 @@ WStack = function(inp, localMode)
     rcomp = object.host_computer
     pubIp = rcomp.public_ip
     lanIp = rcomp.local_ip
+    libArg = ""
+    if inp.len > 0 and inp[0] != "" then libArg = inp[0]
 
     // enumerate LAN from target's perspective via write-build-run (recursive)
     print(c.orange + "Enumerating LAN from target..." + c.ennd)
@@ -228,61 +300,46 @@ WStack = function(inp, localMode)
     end if
     print(c.cyan + "  found " + lanTargets.len + " target(s): " + lanTargets.join(", ") + c.ennd)
 
-    // upload tools
+    // upload prebuilt binary + metaxploit — writing/building the bounce
+    // script ON the target (the old approach) didn't reliably share gco
+    // with the caller (same issue enum_lan's wbLanIps silently has,
+    // masked by its own fallback path). Precompiled + scp'd, same as
+    // slb/netmap, is the pattern actually confirmed to work.
+    wsxBin = currentPath + "/wsx"
+    if not myComp.File(wsxBin) then
+        print(c.yellow + "<b>wstack: wsx binary not found at " + wsxBin + c.ennd)
+        print(c.grey + "  build it first: build /root/ai/tp/wsx.src /root/ai/tp" + c.ennd)
+        return
+    end if
+
     print(c.orange + "Uploading tools..." + c.ennd)
     me = get_shell
     me.scp(currentPath + "/metaxploit.so", "/home/guest", object)
-
-    // write bounce script to target
-    print(c.orange + "Writing bounce script to target..." + c.ennd)
-    rcomp.touch("/home/guest", "wsx.src")
-    srcFile = rcomp.File("/home/guest/wsx.src")
-    if not srcFile then
-        print(c.yellow + "<b>wstack: could not write to /home/guest" + c.ennd)
+    uploadResult = me.scp(wsxBin, "/home/guest", object)
+    if typeof(uploadResult) == "string" and uploadResult != "" then
+        print(c.yellow + "<b>wstack: upload failed: " + uploadResult + c.ennd)
         return
     end if
-    lib = "init.so"
-    if inp.len > 0 and inp[0] != "" then lib = inp[0]
-    q = char(34)
-    n = char(10)
-    bounceSrc = "gco = get_custom_object" + n
-    bounceSrc = bounceSrc + "selfPath = program_path.split(char(47))[:-1].join(char(47))" + n
-    bounceSrc = bounceSrc + "metaxploit = include_lib(selfPath + char(47) + " + q + "metaxploit.so" + q + ")" + n
-    bounceSrc = bounceSrc + "if not metaxploit then metaxploit = include_lib(" + q + "/lib/metaxploit.so" + q + ")" + n
-    bounceSrc = bounceSrc + "if not metaxploit then exit(" + q + "no meta" + q + ")" + n
-    bounceSrc = bounceSrc + "ml = metaxploit.load(" + q + "/lib/init.so" + q +  ")" + n
-	bounceSrc = bounceSrc + "if ml == null then ml = metaxploit.load(" + q + "/lib/libhttp.so" + q +  ")" + n
-    bounceSrc = bounceSrc + "if not ml then exit(" + q + "no weaklib found" + q + ")" + n
-    bounceSrc = bounceSrc + "objs = []" + n
-    bounceSrc = bounceSrc + "ips = gco.wsIPs.split(" + q + "," + q + ")" + n
-    bounceSrc = bounceSrc + "for lanIp in ips" + n
-    bounceSrc = bounceSrc + "  obj = ml.overflow(" + q + "0x1F8F7708" + q + ", " + q + "dexer" + q + ", lanIp)" + n
-	bounceSrc = bounceSrc + "  if not obj then obj == ml.overflow(" + q + "0x1F8F7708" + q + "," + q + "dexer" + q + ", lanIp)" + n
-    bounceSrc = bounceSrc + "  if typeof(obj) == " + q + "computer" + q + " then objs.push(obj)" + n
-    bounceSrc = bounceSrc + "end for" + n
-    bounceSrc = bounceSrc + "gco.wsObjects = objs" + n
-    bounceSrc = bounceSrc + "gco.wsCount = objs.len" + n
 
-    srcFile.set_content(bounceSrc)
-    print(c.orange + "Building on target..." + c.ennd)
-    object.build("/home/guest/wsx.src", "/home/guest", false)
     binFile2 = rcomp.File("/home/guest/wsx")
     if not binFile2 then
-        print(c.yellow + "<b>wstack: build failed" + c.ennd)
-        srcFile.delete
+        print(c.yellow + "<b>wstack: wsx not found on target after upload" + c.ennd)
         mxf = rcomp.File("/home/guest/metaxploit.so")
         if mxf then mxf.delete
         return
     end if
 
     gco.wsIPs = lanTargets.join(",")
+    gco.wsLib = libArg
     gco.wsObjects = null
     gco.wsCount = 0
+    gco.wsDebug = "script did not run"
     print(c.orange + "Running on target..." + c.ennd)
     object.launch("/home/guest/wsx")
+    wait(4)
+    print(c.teal + "  debug: " + gco.wsDebug + c.ennd)
 
     // cleanup
-    srcFile.delete
     binFile2.delete
     mxf = rcomp.File("/home/guest/metaxploit.so")
     if mxf then mxf.delete
@@ -291,11 +348,14 @@ WStack = function(inp, localMode)
     pushed = 0
     if gco.wsObjects and gco.wsCount > 0 then
         for obj in gco.wsObjects
-            if typeof(obj) != "computer" then continue
+            objType = typeof(obj)
+            if objType != "computer" and objType != "shell" then continue
             objectStack.push(obj)
             pushed = pushed + 1
-            print(c.green + "  [+] pushed " + obj.local_ip + " → stack [" + objectStack.len + "]" + c.ennd)
-            homeDir = obj.File("/home")
+            comp = obj
+            if objType == "shell" then comp = obj.host_computer
+            print(c.green + "  [+] pushed " + objType + " " + comp.local_ip + " → stack [" + objectStack.len + "]" + c.ennd)
+            homeDir = comp.File("/home")
             if homeDir then
                 uNames = []
                 for u in homeDir.get_folders
@@ -307,46 +367,436 @@ WStack = function(inp, localMode)
     end if
 
     div
-    print(c.cyan + "wstack complete — " + pushed + " computer(s) pushed to stack across " + lanTargets.len + " device(s)" + c.ennd)
+    print(c.cyan + "wstack complete — " + pushed + " object(s) pushed to stack across " + lanTargets.len + " device(s)" + c.ennd)
     print(c.grey + "  use stack/swap/pop to access" + c.ennd)
 end function
 
-ScanLib = function(ip, port)
+ScanLan = function(ip, port, acceptComputer=false)
+    if ip == "pt" then ip = publicTarget
+    if ip == "lt" then ip = localTarget
     if not is_valid_ip(ip) then
-        print(c.yellow + "<b>scanlib: invalid ip" + c.ennd)
+        print(c.yellow + "<b>scanlan: invalid ip" + c.ennd)
         return
     end if
     portInt = port.to_int
     if typeof(portInt) != "number" then
-        print(c.yellow + "<b>scanlib: invalid port" + c.ennd)
+        print(c.yellow + "<b>scanlan: invalid port" + c.ennd)
         return
     end if
+
+    // LAN targets need to net_use from inside their own segment, same
+    // as scan/grab — direct net_use from the local machine can never
+    // reach a private ip that isn't literally your own LAN. This is
+    // scan+attempt (ScanLanBounce/slb.src), not recon-only, since a
+    // LAN bounce only gets one on-target run either way.
+    if is_lan_ip(ip) then
+        if typeof(globals.object) != "shell" then
+            print(c.yellow + "<b>scanlan: need a remote shell to reach LAN ips" + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+        if not EnsureLanPath(ip) then
+            globals.pipeFailed = true
+            return
+        end if
+        ScanLanBounce(ip, portInt, null)
+        // slb already tried overflow during the scan — if it landed
+        // something, push it straight to the stack instead of
+        // discarding the result and making the caller run a separate
+        // grab to re-fetch what we already have. Verify the type
+        // explicitly rather than trusting gco.slbObj on truthiness
+        // alone — same check GrabLanBounce already does. Computers only
+        // get pushed with -c, same "-c accept computer objects" gate
+        // exploit/grab already use elsewhere — a shell always gets kept.
+        if gco.slbObj and (typeof(gco.slbObj) == "shell" or (typeof(gco.slbObj) == "computer" and acceptComputer)) then
+            objectStack.push(gco.slbObj)
+            print(c.green + "  [+] " + gco.slbObjType + " obtained via " + gco.slbMem + " " + gco.slbVal + " -> pushed to stack [" + objectStack.len + "]" + c.ennd)
+            // gco.slbUserCtx may be missing if the deployed slb binary
+            // predates this field (stale build) — read defensively so
+            // an out-of-date target doesn't crash the caller
+            slbUserCtx = ""
+            if gco.hasIndex("slbUserCtx") then slbUserCtx = gco.slbUserCtx
+            EdbAdd(gco.slbLibName, gco.slbLibVer, gco.slbMem, gco.slbVal, gco.slbObjType, slbUserCtx)
+            gco.slbReady = false
+        else if gco.slbObj and typeof(gco.slbObj) == "computer" and not acceptComputer then
+            print(c.yellow + "<b>scanlan: got computer object — use scanlan -c to accept computers" + c.ennd)
+        end if
+        return
+    end if
+
     ns = metaxploit.net_use(ip, portInt)
     if not ns then
-        print(c.yellow + "<b>scanlib: no net session on " + ip + ":" + port + c.ennd)
+        print(c.yellow + "<b>scanlan: no net session on " + ip + ":" + port + c.ennd)
         globals.pipeFailed = true
         return
     end if
     metalib = ns.dump_lib
     if not metalib then
-        print(c.yellow + "<b>scanlib: metalib not obtained" + c.ennd)
+        print(c.yellow + "<b>scanlan: metalib not obtained" + c.ennd)
         globals.pipeFailed = true
         return
     end if
     print(c.cyan + "Library: " + metalib.lib_name + " " + metalib.version + c.ennd)
-    if metalib.is_patched then
-        print(c.grey + "  [patched - no vulnerabilities]" + c.ennd)
+    if IsDeadLib(metalib.lib_name, metalib.version) then
+        print(c.grey + "  [known dead — no exploitable vulnerabilities, see deadlibs.txt]" + c.ennd)
         return
     end if
-    memList = metaxploit.scan(metalib)
-    if not memList then
-        print(c.grey + "  [no vulnerabilities found]" + c.ennd)
-        return
+
+    // already have confirmed exploit(s) for this exact lib+version from
+    // a prior target — reuse them and skip mx.scan()/scan_address()
+    // entirely instead of rediscovering the same candidates every time
+    exploits = KnownExploits(metalib.lib_name, metalib.version)
+    if exploits.len > 0 then
+        print(c.grey + "  known exploits for " + metalib.lib_name + " " + metalib.version + " — skipping scan (see db.txt)" + c.ennd)
+    else
+        if metalib.is_patched then
+            print(c.grey + "  [patched - no vulnerabilities]" + c.ennd)
+            DeadLibAdd(metalib.lib_name, metalib.version)
+            return
+        end if
+        memList = metaxploit.scan(metalib)
+        if not memList then
+            print(c.grey + "  [no vulnerabilities found]" + c.ennd)
+            DeadLibAdd(metalib.lib_name, metalib.version)
+            return
+        end if
+
+        // decode mem -> val for each vuln (same parse as Scan/ProxyWithChainSaw)
+        // so the pairs are overflow-ready, not just member names
+        for mem in memList
+            addrs = metaxploit.scan_address(metalib, mem).split("Unsafe check: ")
+            for res in addrs
+                if res == addrs[0] then continue
+                valStart = res.indexOf("<b>")
+                if valStart == null then continue
+                valEnd = res.indexOf("</b>", valStart)
+                val = res[valStart + 3 : valEnd]
+                if val == "" then continue
+                exploits.push([mem, val])
+                // recon-only decode still gets persisted to db.txt as an
+                // unconfirmed candidate (blank type/user) — same
+                // convention updatelib already uses — so every lib+version
+                // ever scanned builds up a record in db.txt, not just the
+                // ones somebody actually fired grab/exploit against
+                EdbAdd(metalib.lib_name, metalib.version, mem, val, "", "")
+            end for
+        end for
+
+        if exploits.len == 0 then
+            print(c.grey + "  [scan_address returned no usable values]" + c.ennd)
+            DeadLibAdd(metalib.lib_name, metalib.version)
+            return
+        end if
     end if
-    print(c.orange + "  vulnerabilities: " + memList.len + c.ennd)
-    for mem in memList
-        print(c.gold + "    " + mem + c.ennd)
+
+    print(c.orange + "  vulnerabilities: " + exploits.len + c.ennd)
+    for e in exploits
+        print(c.gold + "    " + e[0] + "  " + e[1] + c.ennd)
     end for
+
+    // cache decoded pairs so `grab ip port` can reuse them without
+    // re-scanning or touching db.txt
+    if not gco.hasIndex("scanLanResults") then gco.scanLanResults = {}
+    gco.scanLanResults[ip + ":" + portInt] = {"lib": metalib.lib_name, "ver": metalib.version, "exploits": exploits}
+    print(c.grey + "  cached — use " + c.white + "grab " + ip + " " + port + c.grey + " to connect" + c.ennd)
+end function
+
+// ── LibScan ────────────────────────────────────────────────────────
+// Scan/attack a NAMED lib on the machine you're currently holding a
+// shell on — not whatever dump_lib auto-picks for a specific port
+// (that's ScanLan/Scan's job). Loads straight from that machine's own
+// /lib via an uploaded payload (payloads/libscan.src), checks
+// db.txt-known exploits first (same shortcut ScanLan/grab already
+// get), and optionally bounces the overflow's inject value at a given
+// LAN ip to pivot onward from there instead of attempting a plain
+// 2-arg overflow on the held machine itself.
+LibScan = function(libName, lanIp, acceptComputer)
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>scanlib: not holding remote shell" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+    rcomp = object.host_computer
+
+    mxf = rcomp.File("/home/guest/metaxploit.so")
+    if not mxf then
+        myShell.scp(currentPath + "/metaxploit.so", "/home/guest", object)
+        mxf = rcomp.File("/home/guest/metaxploit.so")
+    end if
+
+    lsBin = currentPath + "/libscan"
+    if not myComp.File(lsBin) then
+        print(c.yellow + "<b>scanlib: libscan binary not found at " + lsBin + c.ennd)
+        print(c.grey + "  build it first: build /root/ai/tp/libscan.src /root/ai/tp" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    bf = rcomp.File("/home/guest/libscan")
+    if not bf then
+        print(c.grey + "  uploading scanner..." + c.ennd)
+        uploadResult = myShell.scp(lsBin, "/home/guest", object)
+        if typeof(uploadResult) == "string" and uploadResult != "" then
+            print(c.yellow + "<b>scanlib: upload failed: " + uploadResult + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+        bf = rcomp.File("/home/guest/libscan")
+    end if
+    if not bf then
+        print(c.yellow + "<b>scanlib: libscan not found on target after upload" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    gco.lsLib     = libName
+    gco.lsInject  = ""
+    if lanIp then gco.lsInject = lanIp
+    gco.lsResults = null
+    gco.lsCount   = 0
+    gco.lsPatched = 0
+    gco.lsLibName = ""
+    gco.lsLibVer  = ""
+    gco.lsDebug   = "script did not run"
+    gco.lsDone    = false
+    gco.lsDeadLib = false
+    // plain data, not a live object — same launch-boundary pattern
+    // ScanLanBounce already uses for gco.deadLibs/gco.edb
+    gco.deadLibs  = globals.deadLibs
+    gco.edb       = globals.edb
+    object.launch("/home/guest/libscan")
+    waited = 0
+    while not gco.lsDone and waited < 6
+        wait(0.25)
+        waited = waited + 0.25
+    end while
+
+    if gco.lsDeadLib then DeadLibAdd(gco.lsLibName, gco.lsLibVer)
+
+    print(c.teal + "  debug: " + gco.lsDebug + c.ennd)
+
+    if gco.lsPatched == 1 then
+        print(c.grey + "  " + gco.lsLibName + " " + gco.lsLibVer + " — patched" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    if not gco.lsResults or gco.lsCount == 0 then
+        debugMsg = ""
+        if gco.hasIndex("lsDebug") and gco.lsDebug != "" then debugMsg = "  (" + gco.lsDebug + ")"
+        print(c.yellow + "<b>scanlib: no vulns on " + libName + debugMsg + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    print(c.cyan + "  lib: " + gco.lsLibName + " " + gco.lsLibVer + "  [" + gco.lsCount + " vuln(s)]" + c.ennd)
+    lsUserCtx = ""
+    if gco.hasIndex("lsUserCtx") then lsUserCtx = gco.lsUserCtx
+    for entry in gco.lsResults.split(char(2))
+        parts3 = entry.split(char(3))
+        if parts3.len < 2 then continue
+        mem3 = parts3[0]
+        val3 = parts3[1]
+        outcome3 = ""
+        if parts3.len >= 3 then outcome3 = parts3[2]
+        line3 = "    " + mem3 + "  " + val3
+        if outcome3 != "" then line3 = line3 + "  -> " + outcome3
+        print(c.gold + line3 + c.ennd)
+        // record every attempted candidate's actual outcome, not just
+        // the one we ended up keeping — same completeness ScanLanBounce
+        // has for its own results. "skipped" means libscan never
+        // actually tried it (already had a shell) — don't record a
+        // dud for something we didn't attempt.
+        if outcome3 != "" and outcome3 != "skipped" then
+            userForEntry = ""
+            if mem3 == gco.lsMem and val3 == gco.lsVal and outcome3 == gco.lsObjType then userForEntry = lsUserCtx
+            EdbAdd(gco.lsLibName, gco.lsLibVer, mem3, val3, outcome3, userForEntry)
+        end if
+    end for
+
+    if gco.lsObj and (typeof(gco.lsObj) == "shell" or (typeof(gco.lsObj) == "computer" and acceptComputer)) then
+        objectStack.push(gco.lsObj)
+        print(c.green + "  [+] " + gco.lsObjType + " obtained via " + gco.lsMem + " " + gco.lsVal + " -> pushed to stack [" + objectStack.len + "]" + c.ennd)
+    else if gco.lsObj and typeof(gco.lsObj) == "computer" and not acceptComputer then
+        print(c.yellow + "<b>scanlib: got computer object — use scanlib -c to accept computers" + c.ennd)
+    end if
+
+    // a computer found alongside a (better) shell doesn't get silently
+    // dropped just because the shell won as the primary result above —
+    // push it too when -c is set. The != check skips this when lsObj
+    // itself already IS this same computer (no shell ever beat it),
+    // since that case was already pushed by the block above.
+    if acceptComputer and gco.hasIndex("lsCompObj") and gco.lsCompObj and gco.lsCompObj != gco.lsObj then
+        objectStack.push(gco.lsCompObj)
+        print(c.green + "  [+] computer also obtained via " + gco.lsCompMem + " " + gco.lsCompVal + " -> pushed to stack [" + objectStack.len + "]" + c.ennd)
+    end if
+end function
+
+// ── Exploit ────────────────────────────────────────────────────
+// Interactive exploit picker — lists every decoded candidate for
+// ip:port, lets the operator pick one (or supply a fully custom
+// mem/val) plus an optional inject value, then hands off to Grab
+// for the actual overflow attempt + shell/computer handling. No
+// attack logic duplicated — Grab already does the right thing once
+// given an explicit mem/val, this is just an interactive front end
+// for choosing it. Direct ips only; LAN bounce (slb.src) doesn't
+// have a manual-mem/val mode.
+Exploit = function(ip, port, acceptComputer)
+    if ip == "pt" then ip = publicTarget
+    if ip == "lt" then ip = localTarget
+    if not is_valid_ip(ip) then
+        print(c.yellow + "<b>exploit: invalid ip" + c.ennd)
+        return
+    end if
+    if is_lan_ip(ip) then
+        print(c.yellow + "<b>exploit: LAN targets not supported yet — use scanlan/grab instead" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+    portInt = port.to_int
+    if typeof(portInt) != "number" then
+        print(c.yellow + "<b>exploit: invalid port" + c.ennd)
+        return
+    end if
+
+    scanKey = ip + ":" + portInt
+    cached = null
+    if gco.hasIndex("scanLanResults") and gco.scanLanResults.hasIndex(scanKey) then
+        cached = gco.scanLanResults[scanKey]
+    end if
+
+    if not cached then
+        print(c.orange + "  no cached scan — running scanlan first..." + c.ennd)
+        ScanLan(ip, port)
+        if gco.hasIndex("scanLanResults") and gco.scanLanResults.hasIndex(scanKey) then
+            cached = gco.scanLanResults[scanKey]
+        end if
+    end if
+
+    if not cached or cached.exploits.len == 0 then
+        print(c.yellow + "<b>exploit: no candidates for " + ip + ":" + port + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    // candidate list = freshly scanned pairs (type/user unknown, never
+    // tried) merged with matching exploit-db entries for the same
+    // lib+ver (type/user known if this exploit's been fired before) —
+    // backfills onto a scanned candidate the db also knows about, or
+    // adds a db-only candidate the current scan missed
+    candidates = []
+    for pair in cached.exploits
+        candidates.push({"mem": pair[0], "val": pair[1], "type": "", "user": ""})
+    end for
+
+    dbFile = myComp.File(currentPath + "/db.txt")
+    if dbFile and typeof(dbFile) == "file" then
+        dbContent = dbFile.get_content
+        if dbContent and dbContent != "" then
+            for line in dbContent.split(char(10))
+                if line == "" then continue
+                line = line.replace(char(13), "")
+                p1 = line.indexOf("|")
+                if p1 == null then continue
+                p2 = line.indexOf("|", p1 + 1)
+                if p2 == null then continue
+                p3 = line.indexOf("|", p2 + 1)
+                if p3 == null then continue
+                if line[:p1] != cached.lib or line[p1+1:p2] != cached.ver then continue
+                p4 = line.indexOf("|", p3 + 1)
+                dbMem = line[p2+1:p3]
+                dbVal = ""
+                dbType = ""
+                dbUser = ""
+                if p4 != null then
+                    p5 = line.indexOf("|", p4 + 1)
+                    if p5 != null then
+                        dbVal = line[p3+1:p4]
+                        dbType = line[p4+1:p5]
+                        dbUser = line[p5+1:]
+                    else
+                        dbVal = line[p3+1:p4]
+                        dbType = line[p4+1:]
+                    end if
+                else
+                    dbVal = line[p3+1:]
+                end if
+                if dbMem == "" or dbVal == "" then continue
+                found = false
+                for cand in candidates
+                    if cand.mem == dbMem and cand.val == dbVal then
+                        found = true
+                        if dbType != "" then cand.type = dbType
+                        if dbUser != "" then cand.user = dbUser
+                        break
+                    end if
+                end for
+                if not found then
+                    candidates.push({"mem": dbMem, "val": dbVal, "type": dbType, "user": dbUser})
+                end if
+            end for
+        end if
+    end if
+
+    print(c.cyan + "<b>exploit: " + candidates.len + " candidate(s) for " + ip + ":" + port + c.ennd)
+    i = 1
+    for cand in candidates
+        typeLabel = "?"
+        if cand.type != "" then typeLabel = cand.type
+        userLabel = "?"
+        if cand.user != "" then userLabel = cand.user
+        memCol = cand.mem
+        while memCol.len < 12
+            memCol = memCol + " "
+        end while
+        valCol = cand.val
+        while valCol.len < 24
+            valCol = valCol + " "
+        end while
+        print(c.gold + "  [" + i + "]" + c.ennd + memCol + "  " + valCol + "  " + userLabel + "  " + typeLabel)
+        i = i + 1
+    end for
+    print(c.grey + "  [0] custom mem/val" + c.ennd)
+
+    choice = user_input(c.white + "Select an exploit #: " + c.ennd).to_int
+    if typeof(choice) != "number" then
+        print(c.yellow + "<b>exploit: invalid selection" + c.ennd)
+        return
+    end if
+
+    mem = ""
+    val = ""
+    if choice == 0 then
+        mem = user_input(c.white + "Enter memory address: " + c.ennd)
+        if mem == "" then
+            print(c.yellow + "<b>exploit: aborting" + c.ennd)
+            return
+        end if
+        val = user_input(c.white + "Enter overflow value: " + c.ennd)
+        if val == "" then
+            print(c.yellow + "<b>exploit: aborting" + c.ennd)
+            return
+        end if
+    else if choice >= 1 and choice <= candidates.len then
+        mem = candidates[choice - 1].mem
+        val = candidates[choice - 1].val
+    else
+        print(c.yellow + "<b>exploit: invalid selection" + c.ennd)
+        return
+    end if
+
+    inject = user_input(c.white + "Enter ip or password for inject value (<enter>=blank): " + c.ennd)
+    if inject == "" then inject = null
+
+    print(c.orange + "Injecting: " + mem + " " + val + " " + inject + c.ennd)
+    // Grab expects a string port (it does its own .to_int internally,
+    // same as every other caller) — passing the already-converted
+    // portInt number here is what threw "Key Not Found: 'to_int'"
+    Grab(ip, port, mem, val, inject, acceptComputer)
+    // Grab always assigns globals.object to whatever overflow()
+    // returned, even on its own "failure" paths (unaccepted computer,
+    // file, null) — so this reliably shows what actually came back
+    print(c.grey + "  result type: " + typeof(object) + c.ennd)
 end function
 
 // ── QuickGrab (wrapper) ───────────────────────────────────────
@@ -401,10 +851,14 @@ end function
 // ── TargetInfo ──────────────────────────────────────────────────
 // Get detailed info on a target without attacking
 TargetInfo = function(ip)
+    if ip == "pt" then ip = publicTarget
+    if ip == "lt" then ip = localTarget
     if not is_valid_ip(ip) then
         print(c.yellow + "<b>targetinfo: invalid ip" + c.ennd)
+        globals.pipeFailed = true
         return
     end if
+	 
     lan = is_lan_ip(ip)
     router = null
     if lan then
@@ -414,28 +868,50 @@ TargetInfo = function(ip)
     end if
     if not router then
         print(c.yellow + "<b>targetinfo: host not found" + c.ennd)
+        globals.pipeFailed = true
         return
     end if
+
     ports = null
     if lan then
         ports = router.device_ports(ip)
     else
         ports = router.used_ports
     end if
-    if not ports then
-        print(c.yellow + "<b>targetinfo: no ports returned" + c.ennd)
-        return
-    end if
+		lanipenum = devices_lan_ip(router)
+
+		if lanipenum and lanipenum.len > 0 then
+			print(char(10) + c.green + "<b>[i] LAN devices (" + lanipenum.len + "):" + c.ennd)
+			for lip in lanipenum
+				tag = ""
+				if lip == ip then tag = c.gold + "  ← target" + c.ennd
+				print(c.white + "  " + lip + c.ennd + tag)
+			end for
+		else
+			print(char(10) + c.grey + "[i] no LAN devices found" + c.ennd)
+		end if
+
     print(char(10) + c.cyan + "<b>" + ip + c.ennd)
     print(c.gold + "Router kernel: " + router.kernel_version + c.ennd)
     print(c.gold + "Firewall rules: " + router.firewall_rules + c.ennd)
     print(char(10) + c.orange + "Open ports:" + c.ennd)
-    for p in ports
-        svc = router.port_info(p)
-        state = "open"
-        if p.is_closed then state = "closed"
-        print(c.white + "  " + p.port_number + "  " + state + "  " + svc + c.ennd)
-    end for
+    // device_ports() returns a STRING (not null) when the LAN device
+    // is firewalled — iterating that as a port list crashes, since
+    // port_info()/is_closed only work on real port objects
+    if typeof(ports) == "string" then
+        print(c.red + "  firewalled — no port data available" + c.ennd)
+    else if not ports or ports.len == 0 then
+        print(c.grey + "  no open ports" + c.ennd)
+    else
+        for p in ports
+            svc = router.port_info(p)
+            state = "open"
+            if p.is_closed then state = "closed"
+            print(c.white + "  " + p.port_number + "  " + state + "  " + svc + c.ennd)
+        end for
+    end if
+    globals.pipeResult = ip
+    globals.pipeVars["p"] = ip
 end function
 
 // ── LibAudit ────────────────────────────────────────────────────
@@ -468,9 +944,9 @@ end function
 // Clean output + clear_screen after failed hops
 ProxyWithChainSaw = function(hops)
     if typeof(hops) != "number" or hops < 1 then hops = 2
-    
+
     print(char(10) + c.cyan + "<b>=== BUILDING " + hops + "-HOP PROXY CHAIN ===" + c.ennd)
-    
+
     chain = []
     attempts = 0
     maxAttempts = hops * 30
@@ -479,33 +955,40 @@ ProxyWithChainSaw = function(hops)
         attempts = attempts + 1
         ip = floor(rnd*256) + "." + floor(rnd*256) + "." + floor(rnd*256) + "." + floor(rnd*256)
         if is_lan_ip(ip) then continue
-        
+
         print(c.grey + " [" + chain.len + "/" + hops + "] Probing " + ip + " ..." + c.ennd)
-        
+
         router = get_router(ip)
-        if not router then 
+        if not router then
+			wait(1)
             clear_screen
+			wait(1)
             continue
         end if
-        
+
         ns = metaxploit.net_use(ip, 0)
-        if not ns then 
+        if not ns then
+			wait(1)
             clear_screen
+			wait(1)
             continue
         end if
-        
+
         ml = ns.dump_lib
-        if not ml or ml.is_patched then 
+        if not ml or ml.is_patched then
+			wait(1)
             clear_screen
+			wait(1)
             continue
         end if
-        
+
         memList = metaxploit.scan(ml)
-        if not memList then 
+        if not memList then
+			wait(1)
             clear_screen
             continue
         end if
-        
+
         shell = null
         for mem in memList
             if shell then break
@@ -517,16 +1000,24 @@ ProxyWithChainSaw = function(hops)
                 valEnd = res.indexOf("</b>", valStart)
                 val = res[valStart + 3 : valEnd]
                 if val == "" then continue
-                
+
                 obj = ml.overflow(mem, val)
                 if typeof(obj) == "shell" or typeof(obj) == "computer" then
                     shell = obj
-                    EdbAdd(ml.lib_name, ml.version, mem, val)
+                    EdbAdd(ml.lib_name, ml.version, mem, val, typeof(obj), GetUserCtx(obj))
                     break
+                else
+                    // record the miss too — same completeness as the
+                    // direct-ip Grab loop now has
+                    EdbAdd(ml.lib_name, ml.version, mem, val, typeof(obj), "")
+                    // exploratory: haven't confirmed what typeof() returns
+                    // for a firewall-disable side-effect exploit — flag it
+                    // loudly if it ever shows up so we can see the actual type
+                    if typeof(obj) == "firewall" then print("test: firewall disable returned")
                 end if
             end for
         end for
-        
+
         if shell then
             hip = "???"
             if typeof(shell) == "shell" and shell.host_computer then
@@ -570,17 +1061,17 @@ ProxyWithChainSaw = function(hops)
     if typeof(final) == "shell" then
         ChainSaw.load
         wait(1)
-        
+
         rcomp = final.host_computer
         rcePath = "/home/guest"
         rceName = "cs_rce"
-        
+
         rceCode = "chainsaw = get_custom_object.chainsaw" + char(10)
         rceCode = rceCode + "chainsaw.load_samples" + char(10)
         rceCode = rceCode + "chainsaw.load_pregens" + char(10)
         rceCode = rceCode + "chainsaw.load_chains" + char(10)
         rceCode = rceCode + "chainsaw.crack(false)"
-        
+
         rcomp.touch(rcePath, rceName + ".src")
         rf = rcomp.File(rcePath + "/" + rceName + ".src")
         if rf then
@@ -593,7 +1084,7 @@ ProxyWithChainSaw = function(hops)
                 print(c.grey + "  Launching ChainSaw..." + c.ennd)
                 final.launch(rcePath + "/" + rceName)
                 wait(4)
-                
+
                 g = get_custom_object
                 if g.hasIndex("chainsaw") and g.chainsaw != null and g.chainsaw.shell != null then
                     globals.object = g.chainsaw.shell
