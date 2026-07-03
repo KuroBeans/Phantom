@@ -9,9 +9,23 @@ metaxploit = include_lib(currentPath + "/metaxploit.so")
 if not metaxploit then metaxploit = include_lib("/lib/metaxploit.so")
 if not metaxploit then exit(c.yellow + "<b>phantom: metaxploit.so missing" + c.ennd)
 
+// additive only — the plain `metaxploit` global above stays, since
+// ~25+ call sites across hack.src/remote.src/recon.src/misc.src/ops.src
+// reference it directly by that name. This just mirrors gco.crypto for
+// consistency / in case future code wants a gco-visible copy.
+gco.metaxploit = metaxploit
+
+
 gco.crypto = include_lib("/lib/crypto.so")
 if not gco.crypto then gco.crypto = include_lib(currentPath + "/crypto.so")
 if not gco.crypto then exit(c.yellow + "<b>phantom: crypto.so missing" + c.ennd)
+
+// CommandTable must exist before any topic module below is imported —
+// each module registers its own commands (CommandTable["name"] = @CmdFoo)
+// right after its function definition, 5hell-style, instead of listing
+// them in a separate manifest.
+CommandTable = {}
+
 import_code("/root/ai/pt/macro.src")
 import_code("/root/ai/pt/core.src")
 import_code("/root/ai/pt/recon.src")
@@ -22,7 +36,6 @@ import_code("/root/ai/pt/chainsaw.src")
 import_code("/root/ai/pt/stack.src")
 import_code("/root/ai/pt/vars.src")
 import_code("/root/ai/pt/misc.src")
-import_code("/root/ai/pt/commands.src")
 
 myShell      = get_shell
 myComp       = myShell.host_computer
@@ -57,20 +70,57 @@ if dbFile and typeof(dbFile) == "file" then
             p3 = line.indexOf("|", p2 + 1)
             entry = {}
             if p3 != null then
+                p4 = line.indexOf("|", p3 + 1)
                 entry["lib"] = line[:p1]
                 entry["ver"] = line[p1+1:p2]
                 entry["mem"] = line[p2+1:p3]
-                entry["val"] = line[p3+1:]
+                if p4 != null then
+                    p5 = line.indexOf("|", p4 + 1)
+                    if p5 != null then
+                        entry["val"] = line[p3+1:p4]
+                        entry["type"] = line[p4+1:p5]
+                        entry["user"] = line[p5+1:]
+                    else
+                        entry["val"] = line[p3+1:p4]
+                        entry["type"] = line[p4+1:]
+                        entry["user"] = ""
+                    end if
+                else
+                    entry["val"] = line[p3+1:]
+                    entry["type"] = ""
+                    entry["user"] = ""
+                end if
             else
                 entry["lib"] = line[:p1]
                 entry["ver"] = ""
                 entry["mem"] = line[p1+1:p2]
                 entry["val"] = line[p2+1:]
+                entry["type"] = ""
+                entry["user"] = ""
             end if
             if entry["lib"] == "" or entry["mem"] == "" or entry["val"] == "" then continue
             globals.edb.push(entry)
         end for
         print(c.grey + "edb: loaded " + globals.edb.len + " exploit(s) from db.txt" + c.ennd)
+    end if
+end if
+
+// auto-load dead-lib list if it exists (libs previously scanned with
+// zero exploitable vulnerabilities — see DeadLibAdd/IsDeadLib in core.src)
+globals.deadLibs = []
+deadFile = myComp.File(currentPath + "/deadlibs.txt")
+if deadFile and typeof(deadFile) == "file" then
+    deadContent = deadFile.get_content
+    if deadContent and deadContent != "" then
+        for line in deadContent.split(char(10))
+            if line == "" then continue
+            line = line.replace(char(13), "")
+            if line == "" then continue
+            dp1 = line.indexOf("|")
+            if dp1 == null then continue
+            globals.deadLibs.push({"lib": line[:dp1], "ver": line[dp1+1:]})
+        end for
+        print(c.grey + "deadlibs: loaded " + globals.deadLibs.len + " known-dead lib(s)" + c.ennd)
     end if
 end if
 
@@ -96,7 +146,9 @@ end if
 
 Title
 print(c.grey + "type " + c.white + "<b>help</b>" + c.grey + " for commands.  ./ launches local binary.  r./ launches remote." + c.ennd + char(10))
-
+gco.metaxploit.load
+if gco.metaxploit then print("<color=green>[i] Metaxploit has been loaded into GCO")
+if not gco.metaxploit then return print("<color=red>Metaxploit NOT loaded into GCO")
 ChainSaw.load
 pipeQueue = []
 pipeResult = ""
@@ -124,9 +176,23 @@ end for
 // load persisted aliases
 if not gco.hasIndex("aliases") then gco.aliases = {}
 aliases = {}
-for k in gco.aliases.indexes
-    aliases[k] = gco.aliases[k]
-end for
+aliasFile = currentPath + "/aliases.txt"
+aliasFileObj = myComp.File(aliasFile)
+if aliasFileObj then
+    content = aliasFileObj.get_content
+    if content and content != "" then
+        for line in content.split(char(10))
+            line = line.replace(char(13), "")
+            if line == "" then continue
+            eqIdx = line.indexOf("=")
+            if eqIdx == null then continue
+            k = line[:eqIdx]
+            v = line[eqIdx+1:]
+            aliases[k] = v
+            gco.aliases[k] = v
+        end for
+    end if
+end if
 if aliases.len > 0 then
     print(c.grey + "aliases: loaded " + aliases.len + " alias(es)" + c.ennd)
 end if
@@ -187,7 +253,19 @@ while true
         tokens = pipeQueue[0].split(" ")
         i = 0
         while i < tokens.len
-            if tokens[i].len > 1 and tokens[i][0:1] == "@" then
+            // @o [key] — raw gco lookup (any top-level custom_object
+            // index, not just gco.clips like plain @varname below).
+            // Matches 5hell's cob-token convention: @o myx0 == the
+            // value at gco.myx0. Collapses both tokens into one.
+            if tokens[i] == "@o" and i + 1 < tokens.len then
+                key = tokens[i+1]
+                if gco.hasIndex(key) then
+                    tokens[i+1] = gco[key]
+                    tokens.remove(i)
+                else
+                    print(c.yellow + "<b>@o: key not found: " + key + c.ennd)
+                end if
+            else if tokens[i].len > 1 and tokens[i][0:1] == "@" then
                 tok = tokens[i][1:]
                 dotLen = tok.indexOf(".len")
                 if dotLen != null and dotLen == tok.len - 4 then
@@ -335,18 +413,19 @@ while true
         end if
     end if
 
-    // stage detection (|>) must run before pipe detection (|)
-    stageIdx = inp.indexOf("|>")
-    if stageIdx != null then
-        stageQueue.push(inp[stageIdx+1:].join(" "))
-        inp = inp[:stageIdx]
-    end if
+    // stage/pipe detection — skip for 'if' lines (the if handler finds its own | or then)
+    if inp[0] != "if" then
+        stageIdx = inp.indexOf("|>")
+        if stageIdx != null then
+            stageQueue.push(inp[stageIdx+1:].join(" "))
+            inp = inp[:stageIdx]
+        end if
 
-    // pipe detection runs for BOTH user input and queue items
-    pipeIdx = inp.indexOf("|")
-    if pipeIdx != null then
-        pipeQueue.push(inp[pipeIdx+1:].join(" "))
-        inp = inp[:pipeIdx]
+        pipeIdx = inp.indexOf("|")
+        if pipeIdx != null then
+            pipeQueue.push(inp[pipeIdx+1:].join(" "))
+            inp = inp[:pipeIdx]
+        end if
     end if
 
     if inp.len == 0 or inp[0] == "" then continue
@@ -355,7 +434,19 @@ while true
     storeVar = null
     i = 0
     while i < inp.len
-        if inp[i].len > 1 and inp[i][0:1] == "@" then
+        // @o [key] — raw gco lookup (any top-level custom_object index,
+        // not just gco.clips like plain @varname below). Matches
+        // 5hell's cob-token convention: @o myx0 == the value at
+        // gco.myx0. Collapses both tokens into one.
+        if inp[i] == "@o" and i + 1 < inp.len then
+            key = inp[i+1]
+            if gco.hasIndex(key) then
+                inp[i+1] = gco[key]
+                inp.remove(i)
+            else
+                print(c.yellow + "<b>@o: key not found: " + key + c.ennd)
+            end if
+        else if inp[i].len > 1 and inp[i][0:1] == "@" then
             tok = inp[i][1:]
             dotLen = tok.indexOf(".len")
             if dotLen != null and dotLen == tok.len - 4 then
@@ -421,9 +512,10 @@ while true
     //  DISPATCH — everything below replaces the old if/else if chain.
     //  "./" and "r./" are prefix matches on the binary path itself,
     //  so they're checked before the CommandTable lookup. Every other
-    //  command is a plain key in CommandTable (built across macro.src,
-    //  core.src, ops.src, recon.src, hack.src, remote.src, stack.src,
-    //  vars.src, and misc.src — see commands.src).
+    //  command is a plain key in CommandTable, self-registered right next
+    //  to its CmdFoo definition in whichever topic file owns it (core.src,
+    //  ops.src, recon.src, hack.src, remote.src, stack.src, vars.src,
+    //  misc.src) — adding a command is a one-file edit, 5hell-style.
     // ================================================================
     if cmd.len >= 2 and cmd[:2] == "./" then
         f = GetFile(cmd[2:], myComp, true)
