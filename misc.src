@@ -20,6 +20,7 @@ CmdSleep = function(inp)
         end if
     end if
 end function
+CommandTable["sleep"] = @CmdSleep
 
 // ── pause ─────────────────────────────────────────────────────────
 CmdPause = function(inp)
@@ -27,6 +28,7 @@ CmdPause = function(inp)
     if inp.len >= 2 then msg = inp[1:].join(" ")
     user_input(c.grey + msg + c.ennd, false, false)
 end function
+CommandTable["pause"] = @CmdPause
 
 // ── _throw ────────────────────────────────────────────────────────
 CmdThrow = function(inp)
@@ -36,6 +38,7 @@ CmdThrow = function(inp)
     globals.pipeFailed   = true
     print(c.yellow + "  _throw: " + msg + c.ennd)
 end function
+CommandTable["_throw"] = @CmdThrow
 
 // ── _return ───────────────────────────────────────────────────────
 CmdReturn = function(inp)
@@ -59,6 +62,230 @@ CmdReturn = function(inp)
         k = k + 1
     end while
 end function
+CommandTable["_return"] = @CmdReturn
+
+// ── harvest --stack ───────────────────────────────────────────────
+CmdHarveststack = function(inp)
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>harvest --stack: stack is empty" + c.ennd)
+        return
+    end if
+
+    print(char(10) + c.cyan + "<b>HARVEST STACK  " + objectStack.len + " object(s)" + c.ennd)
+    print(c.grey + "================================================================" + c.ennd)
+
+    harvested = 0
+    skipped   = 0
+    savedObj  = globals.object
+
+    idx = 1
+    for obj in objectStack
+        if typeof(obj) != "shell" and typeof(obj) != "computer" then
+            print(c.grey + "  [" + idx + "] skipping — not a shell/computer" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+
+        comp = obj
+        if typeof(obj) == "shell" then comp = obj.host_computer
+        pf = comp.File("/etc/passwd")
+        isRoot = pf != null and pf.has_permission("w")
+
+        if not isRoot then
+            print(c.yellow + "  [" + idx + "] " + comp.public_ip + " — guest only, skipping" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+
+        print(char(10) + c.orange + "  [" + idx + "] " + comp.public_ip + c.ennd)
+        globals.object = obj
+        Harvest()
+        harvested = harvested + 1
+        idx = idx + 1
+    end for
+
+    globals.object = savedObj
+    print(char(10) + c.grey + "================================================================" + c.ennd)
+    print(c.cyan + "harvest --stack complete" + c.ennd)
+    print(c.grey + "  harvested: " + harvested + "  skipped: " + skipped + c.ennd)
+end function
+CommandTable["harveststack"] = @CmdHarveststack
+
+// ── corlog --stack ────────────────────────────────────────────────
+// Corrupts system.log on every root shell in the stack.
+// Skips the y/n prompt — use with intention.
+CmdCorlogstack = function(inp)
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>corlog --stack: stack is empty" + c.ennd)
+        return
+    end if
+
+    print(char(10) + c.cyan + "<b>CORLOG STACK  " + objectStack.len + " object(s)" + c.ennd)
+    print(c.grey + "================================================================" + c.ennd)
+
+    corrupted = 0
+    skipped   = 0
+
+    idx = 1
+    for obj in objectStack
+        comp = obj
+        if typeof(obj) == "shell" then comp = obj.host_computer
+        if typeof(comp) != "computer" then
+            print(c.grey + "  [" + idx + "] skipping — not a shell/computer" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+
+        pf = comp.File("/etc/passwd")
+        isRoot = pf != null and pf.has_permission("w")
+        if not isRoot then
+            print(c.yellow + "  [" + idx + "] " + comp.public_ip + " — guest only, skipping" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+
+        print(c.orange + "  [" + idx + "] " + comp.public_ip + " ..." + c.ennd)
+
+        // inline corlog — no y/n prompt
+        test = comp.touch("/home/guest", "system.log")
+        if test == false then
+            print(c.yellow + "    could not create temp file" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+        f = comp.File("/home/guest/system.log")
+        if not f then
+            print(c.yellow + "    temp file not found" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+        res = f.move("/var", "system.log")
+        if res == "permission denied" then
+            print(c.yellow + "    permission denied on /var" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+        lf = comp.File("/var/system.log")
+        if not lf or lf.is_binary then
+            print(c.yellow + "    failed to get /var/system.log" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+        lf.set_owner("root")
+        lf.set_group("root")
+        lf.chmod("o-w")
+        lf.chmod("g-w")
+        print(c.lime + "    [+] system.log corrupted" + c.ennd)
+        corrupted = corrupted + 1
+        idx = idx + 1
+    end for
+
+    print(c.grey + "================================================================" + c.ennd)
+    print(c.cyan + "corlog --stack complete" + c.ennd)
+    print(c.grey + "  corrupted: " + corrupted + "  skipped: " + skipped + c.ennd)
+end function
+CommandTable["corlogstack"] = @CmdCorlogstack
+
+// ── plantstack ───────────────────────────────────────────────────
+// Upload one or more weaklibs from /root/InsecureLibs to every
+// root shell on the stack.
+// Usage: plantstack [lib1] [lib2] ...
+//        plantstack           → plants init.so + libhttp.so (defaults)
+//        plantstack init.so   → plants only init.so
+CmdPlantstack = function(inp)
+    if objectStack.len == 0 then
+        print(c.yellow + "<b>plantstack: stack is empty" + c.ennd)
+        return
+    end if
+
+    srcDir = "/root/InsecureLibs"
+    dest   = "/lib"
+
+    // build lib list from args, or use defaults
+    libs = []
+    if inp.len >= 2 then
+        for a in inp[1:]
+            libs.push(a)
+        end for
+    else
+        libs = ["init.so", "libhttp.so"]
+    end if
+
+    // verify libs exist locally first
+    missing = []
+    for lib in libs
+        if not myComp.File(srcDir + "/" + lib) then missing.push(lib)
+    end for
+    if missing.len > 0 then
+        print(c.yellow + "<b>plantstack: not found in " + srcDir + ": " + missing.join(", ") + c.ennd)
+        if missing.len == libs.len then return
+    end if
+
+    print(char(10) + c.cyan + "<b>PLANTSTACK" + c.ennd)
+    print(c.grey + "  libs:   " + libs.join(", ") + c.ennd)
+    print(c.grey + "  dest:   " + dest + c.ennd)
+    print(c.grey + "  stack:  " + objectStack.len + " object(s)" + c.ennd)
+    print(c.grey + "================================================================" + c.ennd)
+
+    planted = 0
+    skipped = 0
+    idx = 1
+    for obj in objectStack
+        if typeof(obj) != "shell" then
+            print(c.grey + "  [" + idx + "] skipping — not a shell (" + typeof(obj) + ")" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+
+        comp   = obj.host_computer
+        pubIp  = comp.public_ip
+        isRoot = false
+        pf = comp.File("/etc/passwd")
+        if pf then isRoot = pf.has_permission("w")
+
+        if not isRoot then
+            print(c.yellow + "  [" + idx + "] " + pubIp + " — guest only, skipping" + c.ennd)
+            skipped = skipped + 1
+            idx = idx + 1
+            continue
+        end if
+
+        print(c.orange + "  [" + idx + "] " + pubIp + c.ennd)
+
+        libsOk = 0
+        for lib in libs
+            srcPath = srcDir + "/" + lib
+            if not myComp.File(srcPath) then
+                print(c.grey + "    " + lib + " — not found locally, skipping" + c.ennd)
+                continue
+            end if
+            result = myShell.scp(srcPath, dest, obj)
+            if typeof(result) == "string" and result != "" then
+                print(c.yellow + "    " + lib + " — failed: " + result + c.ennd)
+            else
+                print(c.lime + "    [+] " + lib + c.ennd)
+                libsOk = libsOk + 1
+            end if
+        end for
+
+        if libsOk > 0 then planted = planted + 1
+        idx = idx + 1
+    end for
+
+    print(c.grey + "================================================================" + c.ennd)
+    print(c.cyan + "plantstack complete" + c.ennd)
+    print(c.grey + "  planted: " + planted + "  skipped: " + skipped + "  total: " + objectStack.len + c.ennd)
+end function
+CommandTable["plantstack"] = @CmdPlantstack
 
 // ── plant ────────────────────────────────────────────────────────
 CmdPlant = function(inp)
@@ -96,6 +323,7 @@ CmdPlant = function(inp)
         end if
     end if
 end function
+CommandTable["plant"] = @CmdPlant
 
 // ── chainsaw ─────────────────────────────────────────────────────
 CmdChainsaw = function(inp)
@@ -111,7 +339,7 @@ CmdChainsaw = function(inp)
         print("ChainSaw - Markov Chain Password Cracker by NitroCynic")
         print("")
         print("Commands:")
-        print("  run     - Crack password locally or over network, outputs it")
+        print("  run     - Crack password locally or over network; success sets lObject (local) or object (remote)")
         print("  load    - Load into GCO for in-script RCE chains")
         print("  deploy  - Upload + launch on held remote shell to crack ROOT locally on target")
         print("")
@@ -134,6 +362,18 @@ CmdChainsaw = function(inp)
 
         if result then
             print(c.lime + "Success! Password: " + c.gold + ChainSaw.password + c.ennd)
+            // ChainSaw.connect goes local (get_shell(user, password)) when
+            // no --ip was given, remote (connect_service) otherwise — route
+            // the shell the same way Escalate does for local privesc:
+            // lObject for local, object/remotePath for a held remote target.
+            if ChainSaw.ip == "" then
+                globals.lObject = result
+                print(c.lime + "  local shell acquired" + c.ennd)
+            else
+                globals.object = result
+                globals.remotePath = "/"
+                print(c.lime + "  remote shell acquired: " + ChainSaw.ip + c.ennd)
+            end if
             globals.pipeFailed = false
         else
             print(c.red + "Failed to crack password" + c.ennd)
@@ -208,6 +448,7 @@ CmdChainsaw = function(inp)
         globals.pipeFailed = true
     end if
 end function
+CommandTable["chainsaw"] = @CmdChainsaw
 
 // ── siphon ───────────────────────────────────────────────────────
 // NOTE: original dispatcher called Siphon(inp[1]) / Siphon(null) but
@@ -221,6 +462,7 @@ CmdSiphon = function(inp)
         Siphon(null)
     end if
 end function
+CommandTable["siphon"] = @CmdSiphon
 
 // ── call / macall ─────────────────────────────────────────────────
 CmdCall = function(inp)
@@ -240,6 +482,8 @@ CmdCall = function(inp)
         end if
     end if
 end function
+CommandTable["call"] = @CmdCall
+CommandTable["macall"] = @CmdCall
 
 // ── mac ──────────────────────────────────────────────────────────
 CmdMac = function(inp)
@@ -317,6 +561,7 @@ CmdMac = function(inp)
         end if
     end if
 end function
+CommandTable["mac"] = @CmdMac
 
 // ── exec ─────────────────────────────────────────────────────────
 CmdExec = function(inp)
@@ -398,6 +643,7 @@ CmdExec = function(inp)
         end if
     end if
 end function
+CommandTable["exec"] = @CmdExec
 
 // ── foreach ──────────────────────────────────────────────────────
 CmdForeach = function(inp)
@@ -429,6 +675,7 @@ CmdForeach = function(inp)
         end if
     end if
 end function
+CommandTable["foreach"] = @CmdForeach
 
 // ── break ────────────────────────────────────────────────────────
 CmdBreak = function(inp)
@@ -449,6 +696,7 @@ CmdBreak = function(inp)
         print(c.grey + "  break: not inside a loop" + c.ennd)
     end if
 end function
+CommandTable["break"] = @CmdBreak
 
 // ── continue ─────────────────────────────────────────────────────
 CmdContinue = function(inp)
@@ -473,6 +721,7 @@ CmdContinue = function(inp)
         print(c.grey + "  continue: not inside a loop" + c.ennd)
     end if
 end function
+CommandTable["continue"] = @CmdContinue
 
 // ── rlan ─────────────────────────────────────────────────────────
 CmdRlan = function(inp)
@@ -502,6 +751,7 @@ CmdRlan = function(inp)
         end if
     end if
 end function
+CommandTable["rlan"] = @CmdRlan
 
 // ── rpub ─────────────────────────────────────────────────────────
 CmdRpub = function(inp)
@@ -530,6 +780,7 @@ CmdRpub = function(inp)
         end if
     end if
 end function
+CommandTable["rpub"] = @CmdRpub
 
 // ── ports ────────────────────────────────────────────────────────
 CmdPorts = function(inp)
@@ -573,6 +824,7 @@ CmdPorts = function(inp)
         end if
     end if
 end function
+CommandTable["ports"] = @CmdPorts
 
 // ── p (police records) ────────────────────────────────────────────
 CmdP = function(inp)
@@ -582,6 +834,7 @@ CmdP = function(inp)
         object.launch("/root/PoliceRecord.exe")
     end if
 end function
+CommandTable["p"] = @CmdP
 
 // ── pre (session setup) ───────────────────────────────────────────
 CmdPre = function(inp)
@@ -596,13 +849,23 @@ CmdPre = function(inp)
     wait(2)
     me.launch("/usr/bin/Terminal.exe")
 end function
-
+CommandTable["pre"] = @CmdPre
+CmdCode = function(inp)
+me = get_shell
+me.launch("/usr/bin/CodeEditor.exe")
+end function
+CommandTable["code"] = @CmdCode
 // ── exit / quit ────────────────────────────────────────────────────
 CmdExit = function(inp)
     exit
 end function
+CommandTable["exit"] = @CmdExit
+CommandTable["quit"] = @CmdExit
 
 // ── null / noop / pass ─────────────────────────────────────────────
 CmdNoop = function(inp)
     // intentional no-op
 end function
+CommandTable["null"] = @CmdNoop
+CommandTable["noop"] = @CmdNoop
+CommandTable["pass"] = @CmdNoop
