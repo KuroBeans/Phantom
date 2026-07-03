@@ -2,26 +2,36 @@
 //  core.src  |  phantom module  |  rshell / cover / harvest / wifi / edb
 // ================================================================
 
-// ── Cmd wrappers (dispatch table entries — see commands.src) ─────
+// ── Cmd wrappers — each self-registers into CommandTable right after ─────
+// ── its own definition (see the CommandTable[...] line below it) ─────
 CmdRshell = function(inp)
     RShell(inp[1:])
 end function
+CommandTable["rshell"] = @CmdRshell
 
 CmdCover = function(inp)
     Cover
 end function
+CommandTable["cover"] = @CmdCover
 
 CmdHarvest = function(inp)
-    Harvest
+    if inp.len >= 2 and inp[1] == "--stack" then
+        CmdHarveststack(inp)
+    else
+        Harvest
+    end if
 end function
+CommandTable["harvest"] = @CmdHarvest
 
 CmdWifi = function(inp)
     WiFiCrack
 end function
+CommandTable["wifi"] = @CmdWifi
 
 CmdEdb = function(inp)
     ExploitDB(inp[1:])
 end function
+CommandTable["edb"] = @CmdEdb
 
 // ops.src | cover + harvest
 // cover.src  |  phantom module  |  stealth + rshell
@@ -632,7 +642,11 @@ EdbSave = function()
     for e in globals.edb
         ver = ""
         if e.hasIndex("ver") then ver = e["ver"]
-        out = out + e["lib"] + "|" + ver + "|" + e["mem"] + "|" + e["val"] + char(10)
+        objType = ""
+        if e.hasIndex("type") then objType = e["type"]
+        userCtx = ""
+        if e.hasIndex("user") then userCtx = e["user"]
+        out = out + e["lib"] + "|" + ver + "|" + e["mem"] + "|" + e["val"] + "|" + objType + "|" + userCtx + char(10)
     end for
     savePath = globals.currentPath
     if not savePath or savePath == "" then
@@ -655,20 +669,103 @@ EdbSave = function()
     end if
 end function
 
+// ── DeadLib helpers ──────────────────────────────────────────────
+// Persists which lib+version combos are known to have zero
+// exploitable vulnerabilities (patched, or a scan found nothing) so
+// scanlan/slb.src can skip straight past the expensive mx.scan() +
+// per-mem scan_address() decode pass the next time the same dead
+// lib+version turns up on a different target.
+DeadLibAdd = function(libName, libVer)
+    if not libName or libName == "" then return
+    if globals.deadLibs == null then globals.deadLibs = []
+    for d in globals.deadLibs
+        if d["lib"] == libName and d["ver"] == libVer then return
+    end for
+    globals.deadLibs.push({"lib": libName, "ver": libVer})
+    DeadLibSave()
+end function
+
+DeadLibSave = function()
+    if globals.deadLibs == null then return
+    if globals.deadLibs.len == 0 then return
+    out = ""
+    for d in globals.deadLibs
+        out = out + d["lib"] + "|" + d["ver"] + char(10)
+    end for
+    savePath = globals.currentPath
+    if not savePath or savePath == "" then return
+    comp = get_shell.host_computer
+    f = comp.File(savePath + "/deadlibs.txt")
+    if not f then
+        comp.touch(savePath, "deadlibs.txt")
+        f = comp.File(savePath + "/deadlibs.txt")
+    end if
+    if f and typeof(f) == "file" then f.set_content(out)
+end function
+
+IsDeadLib = function(libName, libVer)
+    if globals.deadLibs == null then return false
+    for d in globals.deadLibs
+        if d["lib"] == libName and d["ver"] == libVer then return true
+    end for
+    return false
+end function
+
+// ── KnownExploits ────────────────────────────────────────────────
+// Returns [mem, val] pairs already recorded in the exploit db for
+// this exact lib+version — any match, confirmed type or not. Lets
+// ScanLan skip mx.scan()/scan_address() entirely for a lib we've
+// already decoded candidates for on some other target. Matches Grab's
+// own db-matching loop, which has always used every entry regardless
+// of type — requiring a confirmed type here (previous version) meant
+// a db full of unconfirmed candidates (e.g. from updatelib's recon-
+// only scan) still silently forced a full re-scan every time.
+KnownExploits = function(libName, libVer)
+    out = []
+    if globals.edb == null then return out
+    for e in globals.edb
+        exVer = ""
+        if e.hasIndex("ver") then exVer = e["ver"]
+        if e["lib"] == libName and exVer == libVer then
+            out.push([e["mem"], e["val"]])
+        end if
+    end for
+    return out
+end function
+
 // ── EdbAdd helper ────────────────────────────────────────────────
-EdbAdd = function(libName, libVer, memAddr, valStr)
+// objType/userCtx are optional — "shell"/"computer" and "root"/"guest"
+// when the caller actually tried overflow() and knows the result, ""
+// when it's just a decoded candidate nobody's fired yet (e.g.
+// updatelib's recon-only scan).
+EdbAdd = function(libName, libVer, memAddr, valStr, objType="", userCtx="")
     if not libName or libName == "" or not memAddr or memAddr == "" or not valStr or valStr == "" then return
     if globals.edb == null then globals.edb = []
     for ex in globals.edb
         exVer = ""
         if ex.hasIndex("ver") then exVer = ex["ver"]
-        if ex["lib"] == libName and exVer == libVer and ex["mem"] == memAddr and ex["val"] == valStr then return
+        if ex["lib"] == libName and exVer == libVer and ex["mem"] == memAddr and ex["val"] == valStr then
+            // already known — backfill anything we now know and didn't before
+            changed = false
+            if objType != "" and (not ex.hasIndex("type") or ex["type"] == "") then
+                ex["type"] = objType
+                changed = true
+            end if
+            if userCtx != "" and (not ex.hasIndex("user") or ex["user"] == "") then
+                ex["user"] = userCtx
+                changed = true
+            end if
+            if changed then EdbSave()
+            return
+        end if
     end for
     entry = {}
     entry["lib"] = libName
     entry["ver"] = libVer
     entry["mem"] = memAddr
     entry["val"] = valStr
+    entry["type"] = objType
+    entry["user"] = userCtx
     globals.edb.push(entry)
     EdbSave()
 end function
@@ -763,7 +860,10 @@ ExploitDB = function(args)
             if line == "" then continue
             line = line.replace(char(13), "")
             if line == "" then continue
-            // split on first 3 pipes only
+            // split on first 5 pipes — 6-field (lib|ver|mem|val|type|user)
+            // is current, 5-field (no user), 4-field (no type/user), and
+            // 3-field (no ver/type/user) are older db.txt generations,
+            // all still readable
             p1 = line.indexOf("|")
             if p1 == null then continue
             p2 = line.indexOf("|", p1 + 1)
@@ -771,15 +871,33 @@ ExploitDB = function(args)
             p3 = line.indexOf("|", p2 + 1)
             entry = {}
             if p3 != null then
+                p4 = line.indexOf("|", p3 + 1)
                 entry["lib"] = line[:p1]
                 entry["ver"] = line[p1+1:p2]
                 entry["mem"] = line[p2+1:p3]
-                entry["val"] = line[p3+1:]
+                if p4 != null then
+                    p5 = line.indexOf("|", p4 + 1)
+                    if p5 != null then
+                        entry["val"] = line[p3+1:p4]
+                        entry["type"] = line[p4+1:p5]
+                        entry["user"] = line[p5+1:]
+                    else
+                        entry["val"] = line[p3+1:p4]
+                        entry["type"] = line[p4+1:]
+                        entry["user"] = ""
+                    end if
+                else
+                    entry["val"] = line[p3+1:]
+                    entry["type"] = ""
+                    entry["user"] = ""
+                end if
             else
                 entry["lib"] = line[:p1]
                 entry["ver"] = ""
                 entry["mem"] = line[p1+1:p2]
                 entry["val"] = line[p2+1:]
+                entry["type"] = ""
+                entry["user"] = ""
             end if
             if entry["lib"] == "" or entry["mem"] == "" or entry["val"] == "" then continue
             globals.edb.push(entry)
