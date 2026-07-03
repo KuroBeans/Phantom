@@ -1,0 +1,110 @@
+// wsx.src  |  wstack bounce helper  |  runs ON target router
+// Build: build /root/ai/tp/wsx.src /root/ai/tp
+//
+// Default libs (init.so/libhttp.so) — no lib param given: uses the
+// known-good hardcoded exploit signature directly (0x1F8F7708/dexer,
+// 0x1F000FB5/length fallback). Fast, since we already know these
+// work against those two specific libs.
+//
+// Custom lib (wstack [libname] / wstack -l [libname]) — no known
+// signature for an arbitrary lib, so this scans for real instead
+// (mx.scan/scan_address, same decode logic slb.src uses) and tries
+// every decoded candidate.
+//
+// Either way, the winning mem/val gets bounced at each discovered
+// LAN ip via overflow's 3rd arg — never net_use()-ing the target
+// directly.
+
+gco = get_custom_object
+
+// clear stale results up front — every exit path below (missing
+// metaxploit, missing weaklib, missing wsIPs) must leave this run's
+// outcome unambiguous rather than a leftover object list from a
+// previous run. Previously this only worked because the caller
+// happened to reset these before every launch — not self-defending.
+gco.wsObjects = []
+gco.wsCount   = 0
+
+// confirmed: /lib/metaxploit.so is NOT reliably present on target
+// machines — the caller uploads a copy alongside the binary, so
+// check there first.
+metaxploit = include_lib(program_path.split("/")[:-1].join("/") + "/metaxploit.so")
+if not metaxploit then metaxploit = include_lib("/lib/metaxploit.so")
+if not metaxploit then
+    gco.wsDebug = "no metaxploit"
+    exit
+end if
+
+if not gco.hasIndex("wsIPs") or not gco.wsIPs then
+    gco.wsDebug = "wsIPs not set"
+    exit
+end if
+ips = gco.wsIPs.split(",")
+objs = []
+
+if gco.hasIndex("wsLib") and gco.wsLib != "" then
+    // custom lib requested — no known signature, scan for real
+    ml = metaxploit.load("/lib/" + gco.wsLib)
+    if not ml then ml = metaxploit.load(gco.wsLib)
+    if not ml then
+        gco.wsDebug = "lib not found: " + gco.wsLib
+        exit
+    end if
+
+    mems = metaxploit.scan(ml)
+    candidates = []
+    if mems then
+        for mem in mems
+            raw = metaxploit.scan_address(ml, mem)
+            addrs = raw.split("Unsafe check: ")
+            for addr in addrs
+                if addr == addrs[0] then continue
+                p1 = addr.indexOf("<b>")
+                p2 = addr.indexOf("</b>")
+                if p1 == null or p2 == null then continue
+                val = addr[p1+3:p2]
+                if val == "" then continue
+                candidates.push({"mem": mem, "val": val})
+            end for
+        end for
+    end if
+
+    if candidates.len == 0 then
+        gco.wsDebug = "no candidates on " + ml.lib_name + " " + ml.version
+        exit
+    end if
+
+    gco.wsDebug = "scanning " + ips.len + " ip(s) with " + candidates.len + " candidate(s) on " + ml.lib_name + "..."
+    for lanIp in ips
+        for cand in candidates
+            obj = ml.overflow(cand.mem, cand.val, lanIp)
+            if typeof(obj) == "computer" or typeof(obj) == "shell" then
+                objs.push(obj)
+                gco.wsDebug = gco.wsDebug + " | got " + typeof(obj) + " on " + lanIp
+                break
+            end if
+        end for
+    end for
+else
+    // default weak libs — known-good signature, try it directly
+    ml = metaxploit.load("/lib/init.so")
+    if ml == null then ml = metaxploit.load("/lib/libhttp.so")
+    if not ml then
+        gco.wsDebug = "no weaklib found"
+        exit
+    end if
+
+    gco.wsDebug = "scanning " + ips.len + " ip(s)..."
+    for lanIp in ips
+        obj = ml.overflow("0x1F8F7708", "dexer", lanIp)
+        if not obj then obj = ml.overflow("0x1F000FB5", "length", lanIp)
+        if typeof(obj) == "computer" or typeof(obj) == "shell" then
+            objs.push(obj)
+            gco.wsDebug = gco.wsDebug + " | got " + typeof(obj) + " on " + lanIp
+        end if
+    end for
+end if
+
+gco.wsObjects = objs
+gco.wsCount   = objs.len
+gco.wsDebug   = gco.wsDebug + " — done: " + objs.len + " found"
