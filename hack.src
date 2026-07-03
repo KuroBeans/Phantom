@@ -164,16 +164,44 @@ WStack = function(inp, localMode)
             deviceList.push(gapIp)
         end for
 
+        // db.txt-known exploits for this exact lib+version first — same
+        // shortcut scanlan/scanlib/grab already get — before falling
+        // back to the two hardcoded weaklib signatures below
+        knownPairs = KnownExploits(ml.lib_name, ml.version)
+        if knownPairs.len > 0 then
+            print(c.grey + "  " + knownPairs.len + " known db exploit(s) for " + ml.lib_name + " " + ml.version + " — trying those first" + c.ennd)
+        end if
+
         print(c.cyan + "  found " + deviceList.len + " device(s)" + c.ennd)
         pushed = 0
         for lanIp in deviceList
             print(c.orange + "  bouncing to " + lanIp + " ..." + c.ennd)
-            obj = ml.overflow("0x1F8F7708", "dexer", lanIp)
-			if obj == null then obj == ml.overflow("0x1F000FB5", "length", lanip)
-			if not obj then
-				return print(c.yellow + "Use Lib init.so or libhttp.so")
-			end if
-
+            obj = null
+            for pair in knownPairs
+                obj = ml.overflow(pair[0], pair[1], lanIp)
+                EdbAdd(ml.lib_name, ml.version, pair[0], pair[1], typeof(obj), "")
+                if typeof(obj) == "shell" or typeof(obj) == "computer" then break
+                obj = null
+            end for
+            if not obj then
+                // fixed: was "obj == ml.overflow(...)" (comparison,
+                // discarded — never reassigned obj) and "lanip" (wrong
+                // case, undefined — silently passed null as the inject
+                // value) — this fallback never actually worked before
+                obj = ml.overflow("0x1F8F7708", "dexer", lanIp)
+                EdbAdd(ml.lib_name, ml.version, "0x1F8F7708", "dexer", typeof(obj), "")
+                if not obj then
+                    obj = ml.overflow("0x1F000FB5", "length", lanIp)
+                    EdbAdd(ml.lib_name, ml.version, "0x1F000FB5", "length", typeof(obj), "")
+                end if
+            end if
+            if not obj then
+                // was "return print(...)" — aborted the ENTIRE scan on
+                // the first device with no working exploit instead of
+                // just skipping it and continuing to the rest
+                print(c.yellow + "    no working exploit for " + lanIp + c.ennd)
+                continue
+            end if
 
             if typeof(obj) != "computer" then continue
             objectStack.push(obj)
@@ -333,11 +361,30 @@ WStack = function(inp, localMode)
     gco.wsLib = libArg
     gco.wsObjects = null
     gco.wsCount = 0
+    gco.wsResults = null
+    gco.wsLibName = ""
+    gco.wsLibVer  = ""
     gco.wsDebug = "script did not run"
+    // plain data, not a live object — same launch-boundary pattern
+    // ScanLanBounce/LibScan already use. Lets wsx.src try db-known
+    // exploits first instead of always falling to the hardcoded
+    // signature or a full scan.
+    gco.edb = globals.edb
     print(c.orange + "Running on target..." + c.ennd)
     object.launch("/home/guest/wsx")
     wait(4)
     print(c.teal + "  debug: " + gco.wsDebug + c.ennd)
+
+    // wsx.src can't write db.txt itself (it runs on the target, not the
+    // origin machine) — record every attempted candidate it reports
+    // back, same completeness ScanLanBounce/LibScan already have
+    if gco.hasIndex("wsResults") and gco.wsResults and gco.hasIndex("wsLibName") and gco.wsLibName != "" then
+        for entry in gco.wsResults.split(char(2))
+            parts4 = entry.split(char(3))
+            if parts4.len < 4 then continue
+            EdbAdd(gco.wsLibName, gco.wsLibVer, parts4[1], parts4[2], parts4[3], "")
+        end for
+    end if
 
     // cleanup
     binFile2.delete
