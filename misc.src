@@ -862,6 +862,207 @@ end function
 CommandTable["exit"] = @CmdExit
 CommandTable["quit"] = @CmdExit
 
+// ── claim ──────────────────────────────────────────────────────────
+// Picks up a shell left behind by ArLocal (autoroot -l / ar -l) in
+// gco.claimShell — e.g. jump to a target, autoroot -l yourself there,
+// then come back to your original phantom session and run claim to
+// have that root shell land in globals.object here. gco is a
+// persistent, player-scoped store (same reason slb.src/wsx.src already
+// hand live shell/computer objects back across a launch boundary
+// between two different machines), so this works across two
+// independent phantom sessions, not just within one script's own
+// launch/wait cycle.
+CmdClaim = function(inp)
+    gcoClaim = get_custom_object
+    if gcoClaim.hasIndex("claimShell") and gcoClaim.claimShell then
+        globals.object = gcoClaim.claimShell
+        globals.remotePath = "/"
+        gcoClaim.claimShell = null
+        // leave can hand off a computer object too, not just a shell —
+        // .host_computer only exists on shells, so branch instead of
+        // assuming shell like the original ArLocal-only version did
+        if typeof(object) == "shell" then
+            print(c.lime + "<b>claimed shell: " + object.host_computer.get_name + "  pub:" + object.host_computer.public_ip + "  lan:" + object.host_computer.local_ip + c.ennd)
+        else
+            print(c.lime + "<b>claimed computer: " + object.get_name + "  pub:" + object.public_ip + "  lan:" + object.local_ip + c.ennd)
+        end if
+        globals.pipeFailed = false
+        return
+    end if
+
+    // gco.claimLib only ever carries a lib NAME (a plain string), never
+    // a live lib handle — payloads/slb.src's own header notes sharing
+    // an actual metaxploitLib object across a launch boundary was tried
+    // three times and failed every time (a reused handle's net_use
+    // comes back null). So the receiving side always loads its own
+    // fresh handle here, from whatever's on THIS machine's own /lib —
+    // same as libscan.src does for a named lib.
+    if gcoClaim.hasIndex("claimLib") and gcoClaim.claimLib and gcoClaim.claimLib != "" then
+        libName = gcoClaim.claimLib
+        gcoClaim.claimLib = null
+        ml = metaxploit.load("/lib/" + libName)
+        if not ml then ml = metaxploit.load(libName)
+        if not ml then
+            print(c.yellow + "<b>claim: lib not found here: " + libName + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+        globals.activeLib = ml
+        print(c.lime + "<b>claimed + loaded lib: " + ml.lib_name + " " + ml.version + c.ennd)
+        print(c.grey + "  held in globals.activeLib — reference it directly, e.g. via exec/code" + c.ennd)
+        globals.pipeFailed = false
+        return
+    end if
+
+    // gco.claimMx carries a metaxploit.so PATH, not a live handle — same
+    // reasoning as claimLib above. Different metaxploit.so copies (e.g.
+    // pulled from a specific target) can decode things your own local
+    // one can't, so uselib checks globals.activeMx before falling back
+    // to the one global metaxploit loaded at startup.
+    if gcoClaim.hasIndex("claimMx") and gcoClaim.claimMx and gcoClaim.claimMx != "" then
+        mxPath = gcoClaim.claimMx
+        gcoClaim.claimMx = null
+        mx = include_lib(mxPath)
+        if not mx then
+            print(c.yellow + "<b>claim: metaxploit not found at " + mxPath + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+        globals.activeMx = mx
+        print(c.lime + "<b>claimed + loaded metaxploit: " + mxPath + c.ennd)
+        print(c.grey + "  held in globals.activeMx — uselib will use it over the default metaxploit" + c.ennd)
+        globals.pipeFailed = false
+        return
+    end if
+
+    print(c.yellow + "<b>claim: nothing waiting to be claimed" + c.ennd)
+    globals.pipeFailed = true
+end function
+CommandTable["claim"] = @CmdClaim
+
+// ── leave ──────────────────────────────────────────────────────────
+// The mirror of claim: leaves whatever shell/computer you're currently
+// holding in gco.claimShell for pickup from ANOTHER phantom session —
+// e.g. hold a shell here, leave it, jump to a target, then claim it
+// from the nested instance running there (or the other way around).
+// leave -lib <name> instead leaves just a lib NAME in gco.claimLib —
+// see the claim-side comment on why a live lib handle can't make the
+// same trip.
+CmdLeave = function(inp)
+    if inp.len >= 3 and inp[1] == "-lib" then
+        gcoLeave = get_custom_object
+        gcoLeave.claimLib = inp[2]
+        print(c.lime + "<b>left lib '" + inp[2] + "' for pickup" + c.ennd)
+        print(c.grey + "  run 'claim' from another phantom session to load it there" + c.ennd)
+        globals.pipeFailed = false
+        return
+    end if
+    if inp.len >= 2 and inp[1] == "-mx" then
+        // no path given -> default to phantom's own metaxploit.so
+        // (same path it loaded at startup) so "leave -mx" alone just
+        // shares your own copy without having to type it out
+        mxPath = currentPath + "/metaxploit.so"
+        if inp.len >= 3 then mxPath = inp[2]
+        gcoLeave = get_custom_object
+        gcoLeave.claimMx = mxPath
+        print(c.lime + "<b>left metaxploit path '" + mxPath + "' for pickup" + c.ennd)
+        print(c.grey + "  run 'claim' from another phantom session to load it there" + c.ennd)
+        globals.pipeFailed = false
+        return
+    end if
+
+    if typeof(object) != "shell" and typeof(object) != "computer" then
+        print(c.yellow + "<b>leave: not holding a shell or computer to leave" + c.ennd)
+        print(c.grey + "  or: leave -lib <name>  /  leave -mx <path>  for those instead" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+    gcoLeave = get_custom_object
+    gcoLeave.claimShell = object
+    print(c.lime + "<b>left " + typeof(object) + " for pickup" + c.ennd)
+    print(c.grey + "  run 'claim' from another phantom session to grab it" + c.ennd)
+    globals.pipeFailed = false
+end function
+CommandTable["leave"] = @CmdLeave
+
+// ── uselib ─────────────────────────────────────────────────────────
+// First real consumer of globals.activeLib (set by claim). Tries
+// db-known pairs first (KnownExploits, core.src), else scans/decodes
+// fresh, same precedence ScanLib/grab already use elsewhere. Scans
+// with globals.activeMx (claim -mx) if one's held, since a different
+// metaxploit.so copy can decode things the default one can't — falls
+// back to the one global metaxploit loaded at startup otherwise.
+// uselib [opt:inject] [opt:-c] [opt:-s]
+// -s: recon only — decode + record candidates to db.txt (unconfirmed,
+// blank type/user, same as scanlan's direct-ip mode) without ever
+// calling overflow(). Point of this: claim a lib mid-jump, come back
+// out to your original session, and bank its candidates in db.txt
+// without needing a live target to attack right now.
+CmdUselib = function(inp)
+    if not globals.activeLib then
+        print(c.yellow + "<b>uselib: no active lib — claim one first" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+    ml = globals.activeLib
+    mx = metaxploit
+    if globals.activeMx then mx = globals.activeMx
+    scanOnly = inp.indexOf("-s") != null
+    acceptComputer = inp.indexOf("-c") != null
+    inject = null
+    for a in inp[1:]
+        if a != "-c" and a != "-s" then inject = a
+    end for
+
+    pairs = KnownExploits(ml.lib_name, ml.version)
+    freshScan = pairs.len == 0
+    if freshScan then
+        mems = mx.scan(ml)
+        if mems then
+            for mem in mems
+                for addr in mx.scan_address(ml, mem).split("Unsafe check: ")
+                    if addr.indexOf("<b>") == null then continue
+                    v = addr[addr.indexOf("<b>")+3:addr.indexOf("</b>")]
+                    if v != "" then pairs.push([mem, v])
+                end for
+            end for
+        end if
+    end if
+    if pairs.len == 0 then
+        print(c.yellow + "<b>uselib: no candidates for " + ml.lib_name + " " + ml.version + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    if scanOnly then
+        print(c.cyan + "<b>uselib -s: " + pairs.len + " candidate(s) for " + ml.lib_name + " " + ml.version + c.ennd)
+        for pair in pairs
+            print(c.gold + "  " + pair[0] + "  " + pair[1] + c.ennd)
+            // only the fresh-scan case needs recording — KnownExploits
+            // pairs are already in db.txt by definition
+            if freshScan then EdbAdd(ml.lib_name, ml.version, pair[0], pair[1], "", "")
+        end for
+        globals.pipeFailed = false
+        return
+    end if
+
+    for pair in pairs
+        if inject then obj = ml.overflow(pair[0], pair[1], inject) else obj = ml.overflow(pair[0], pair[1])
+        t = typeof(obj)
+        EdbAdd(ml.lib_name, ml.version, pair[0], pair[1], t, "")
+        if t == "shell" or (t == "computer" and acceptComputer) then
+            globals.object = obj
+            globals.remotePath = "/"
+            print(c.lime + "<b>uselib: " + t + " via " + pair[0] + " " + pair[1] + c.ennd)
+            globals.pipeFailed = false
+            return
+        end if
+    end for
+    print(c.yellow + "<b>uselib: no working exploit (use -c to accept a computer)" + c.ennd)
+    globals.pipeFailed = true
+end function
+CommandTable["uselib"] = @CmdUselib
+
 // ── null / noop / pass ─────────────────────────────────────────────
 CmdNoop = function(inp)
     // intentional no-op
@@ -869,3 +1070,6 @@ end function
 CommandTable["null"] = @CmdNoop
 CommandTable["noop"] = @CmdNoop
 CommandTable["pass"] = @CmdNoop
+
+
+
