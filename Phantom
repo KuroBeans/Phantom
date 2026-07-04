@@ -154,6 +154,7 @@ if not gco.metaxploit then return print("<color=red>Metaxploit NOT loaded into G
 ChainSaw.load
 pipeQueue = []
 pipeResult = ""
+pipeObjResult = null
 pipeVars = {}
 pipeFailed = false
 foreachBody = ""
@@ -165,6 +166,13 @@ stageQueue   = []
 stackforItems  = []
 stackforBody   = ""
 stackforSaved  = null
+// side-channel for macro "for @x in @objclip ... endfor" — can't encode
+// live objects into the __for__ line's own text the way string items
+// get comma-joined back in, so the remaining items ride here instead
+// between __forobj__ pops (see HandleForObjLine, macro.src)
+macroForObjItems = []
+macroForObjBody  = ""
+macroForObjVar   = ""
 macroInTry     = false
 macroCatchVar  = ""
 macroCatchBody = ""
@@ -327,6 +335,9 @@ while true
             continue
         else if line.len >= 7 and line[:7] == "__for__" then
             HandleForLine(line)
+            continue
+        else if line == "__forobj__" then
+            HandleForObjLine()
             continue
         else if line == "__funcend__" then
             HandleFuncend()
