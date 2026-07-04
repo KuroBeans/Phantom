@@ -429,6 +429,7 @@ Harvest = function()
     targets = ["Mail.txt", "Bank.txt"]
     cracked = 0
     total   = 0
+    crackedList = []
 
     for user in users
         userName = user.name
@@ -466,6 +467,7 @@ Harvest = function()
                 if pw then
                     print(c.lime + "      " + user2 + c.ennd + c.grey + " : " + c.ennd + c.gold + "<b>" + pw + c.ennd)
                     cracked = cracked + 1
+                    crackedList.push(user2 + ":" + pw)
                 else
                     print(c.white + "      " + user2 + c.ennd + c.grey + " : " + c.ennd + c.red + "not found  " + c.grey + "[" + hash[:12] + "...]" + c.ennd)
                 end if
@@ -492,11 +494,23 @@ Harvest = function()
                 if pw then
                     print(c.lime + "      " + user2 + c.ennd + c.grey + " : " + c.ennd + c.gold + "<b>" + pw + c.ennd + c.grey + "  [SSH]" + c.ennd)
                     cracked = cracked + 1
+                    crackedList.push(user2 + ":" + pw)
                 else
                     print(c.white + "      " + user2 + c.ennd + c.grey + " : " + c.ennd + c.red + "not found  " + c.grey + "[" + hash[:12] + "...]" + c.ennd)
                 end if
             end for
         end if
+    end if
+
+    // lets "harvest | clip @b" capture every cracked user:pass pair —
+    // same comma-joined convention every other clip already uses.
+    // Explicit else clears stale pipeResult from a PRIOR object's
+    // harvest — without it, "foreach @b | harvest | write" would
+    // re-write the last hit's creds again on every empty-handed object.
+    if crackedList.len > 0 then
+        globals.pipeResult = crackedList.join(",")
+    else
+        globals.pipeResult = ""
     end if
 
     print(char(10) + c.grey + "----------------------------------------------------------------" + c.ennd)
