@@ -1041,41 +1041,61 @@ ProxyWithChainSaw = function(hops)
             continue
         end if
 
-        memList = metaxploit.scan(ml)
-        if not memList then
-			wait(1)
-            clear_screen
-            continue
-        end if
-
         shell = null
-        for mem in memList
-            if shell then break
-            addrs = metaxploit.scan_address(ml, mem).split("Unsafe check: ")
-            for res in addrs
-                if res == addrs[0] then continue
-                valStart = res.indexOf("<b>")
-                if valStart == null then continue
-                valEnd = res.indexOf("</b>", valStart)
-                val = res[valStart + 3 : valEnd]
-                if val == "" then continue
 
-                obj = ml.overflow(mem, val)
-                if typeof(obj) == "shell" or typeof(obj) == "computer" then
-                    shell = obj
-                    EdbAdd(ml.lib_name, ml.version, mem, val, typeof(obj), GetUserCtx(obj))
-                    break
-                else
-                    // record the miss too — same completeness as the
-                    // direct-ip Grab loop now has
-                    EdbAdd(ml.lib_name, ml.version, mem, val, typeof(obj), "")
-                    // exploratory: haven't confirmed what typeof() returns
-                    // for a firewall-disable side-effect exploit — flag it
-                    // loudly if it ever shows up so we can see the actual type
-                    if typeof(obj) == "firewall" then print("test: firewall disable returned")
-                end if
-            end for
+        // db-known exploits for this exact lib+version first — same
+        // shortcut ScanLib/grab/wstack already get — before falling
+        // back to the full scan/decode below. Random probing hits the
+        // same handful of common router libs constantly, so this skips
+        // re-decoding candidates for ones already confirmed.
+        for pair in KnownExploits(ml.lib_name, ml.version)
+            if shell then break
+            obj = ml.overflow(pair[0], pair[1])
+            if typeof(obj) == "shell" or typeof(obj) == "computer" then
+                shell = obj
+                EdbAdd(ml.lib_name, ml.version, pair[0], pair[1], typeof(obj), GetUserCtx(obj))
+            else
+                EdbAdd(ml.lib_name, ml.version, pair[0], pair[1], typeof(obj), "")
+                if typeof(obj) == "firewall" then print("test: firewall disable returned")
+            end if
         end for
+
+        if not shell then
+            memList = metaxploit.scan(ml)
+            if not memList then
+			    wait(1)
+                clear_screen
+                continue
+            end if
+
+            for mem in memList
+                if shell then break
+                addrs = metaxploit.scan_address(ml, mem).split("Unsafe check: ")
+                for res in addrs
+                    if res == addrs[0] then continue
+                    valStart = res.indexOf("<b>")
+                    if valStart == null then continue
+                    valEnd = res.indexOf("</b>", valStart)
+                    val = res[valStart + 3 : valEnd]
+                    if val == "" then continue
+
+                    obj = ml.overflow(mem, val)
+                    if typeof(obj) == "shell" or typeof(obj) == "computer" then
+                        shell = obj
+                        EdbAdd(ml.lib_name, ml.version, mem, val, typeof(obj), GetUserCtx(obj))
+                        break
+                    else
+                        // record the miss too — same completeness as the
+                        // direct-ip Grab loop now has
+                        EdbAdd(ml.lib_name, ml.version, mem, val, typeof(obj), "")
+                        // exploratory: haven't confirmed what typeof() returns
+                        // for a firewall-disable side-effect exploit — flag it
+                        // loudly if it ever shows up so we can see the actual type
+                        if typeof(obj) == "firewall" then print("test: firewall disable returned")
+                    end if
+                end for
+            end for
+        end if
 
         if shell then
             hip = "???"
@@ -1156,5 +1176,4 @@ ProxyWithChainSaw = function(hops)
     end if
 
     print(c.green + "<b>Proxy is now active on final hop" + c.ennd)
-    print(c.grey + "Use: stack | swap 0 | scan pt 22" + c.ennd)
-end function
+    end function
