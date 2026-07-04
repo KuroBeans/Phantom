@@ -46,6 +46,21 @@ CmdClip = function(inp)
             k = k.split(",")[0]
         end if
 
+        // A pending object-list result (e.g. from "stack | clip @b")
+        // takes priority over the normal string path — objects can't be
+        // joined into gco.clips' plain-string values, so they get their
+        // own store (gco.objClips) that foreach/for @x in @b know to
+        // check. Only applies to the bare "clip @name" capture form,
+        // same as the string pipeResult path below it.
+        if inp.len < 3 and globals.pipeObjResult != null and globals.pipeObjResult.len > 0 then
+            gcoO = get_custom_object
+            if not gcoO.hasIndex("objClips") then gcoO.objClips = {}
+            gcoO.objClips[k] = globals.pipeObjResult
+            globals.pipeObjResult = null
+            print(c.lime + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + gcoO.objClips[k].len + " object(s)" + c.ennd)
+            return
+        end if
+
         // Check for += (accumulation mode)
         if inp.len >= 3 and inp[2] == "+=" then
             val = inp[3:].join(" ")
@@ -69,7 +84,9 @@ CmdClip = function(inp)
                 val = pipeResult
                 gco.clips[k] = val
                 pipeVars[k] = val
-                globals.pipeResult = ""
+                // leave pipeResult as-is (don't clear it) — lets clip act as
+                // a tee, e.g. "harvest | clip @a | write file" both saves the
+                // named clip AND still hands the same result on to write
                 print(c.lime + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + val + c.ennd)
             else if gco.clips.hasIndex(k) then
                 print(c.gold + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + gco.clips[k] + c.ennd)
@@ -314,3 +331,139 @@ CmdLog = function(inp)
     end if
 end function
 CommandTable["log"] = @CmdLog
+
+// ── write ────────────────────────────────────────────────────────
+// Appends whatever the pipe just produced to a file, one entry per
+// line — e.g. "stack | clip @b | foreach @b | harvest | write creds.txt"
+// logs every cracked user:pass across the whole object list as it's
+// found. Deliberately splits pipeResult on "," instead of writing it
+// as one joined line: harvest/ports/etc. all comma-join multiple
+// results into pipeResult for @clip purposes, but a written log should
+// read as one finding per line, not one giant CSV row.
+// write <file> -r instead reads the file back and prints it with line
+// numbers (no write) — meant as a lookup step before a future flag
+// that edits/replaces one specific line.
+// Path resolution matches touch: an absolute path (leading "/") is
+// used as-is, a bare name like "creds.txt" resolves against the
+// current local dir (myPath) via the same GetFile/Touch helpers touch
+// itself uses — no separate ad-hoc folder-splitting here.
+CmdWrite = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: write <file> [-l]")
+        print(c.grey + "  e.g.  harvest | write creds.txt        (saves in the current dir, like touch)" + c.ennd)
+        print(c.grey + "  e.g.  harvest | write /root/ai/creds.txt" + c.ennd)
+        print(c.grey + "  e.g.  write creds.txt -l   (print file, numbered — see append)" + c.ennd)
+        return
+    end if
+
+    filePath = inp[1]
+    f = GetFile(filePath, myComp, true)
+    if not f then
+        Touch(filePath, myComp, true)
+        f = GetFile(filePath, myComp, true)
+    end if
+    if not f then
+        print(c.yellow + "<b>write: could not create " + filePath + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    if inp.len >= 3 and inp[2] == "-l" then
+        content = f.get_content
+        if not content or content == null then content = ""
+        lines = content.split(char(10))
+        // drop the trailing blank line from the final char(10) every write leaves
+        if lines.len > 0 and lines[-1] == "" then lines = lines[:-1]
+        print(c.cyan + "<b>" + filePath + "  (" + lines.len + " line(s))" + c.ennd)
+        i = 1
+        for ln in lines
+            print(c.gold + "  [" + i + "] " + c.ennd + c.white + ln + c.ennd)
+            i = i + 1
+        end for
+        return
+    end if
+
+    if pipeResult == "" then
+        print(c.yellow + "<b>write: nothing in the pipe to write" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    entries = pipeResult.split(",")
+    existing = f.get_content
+    if not existing or existing == null then existing = ""
+    out = existing
+    written = 0
+    for e in entries
+        if e == "" then continue
+        out = out + e + char(10)
+        written = written + 1
+    end for
+    f.set_content(out)
+    print(c.lime + "  wrote " + written + " line(s) to " + filePath + c.ennd)
+    globals.pipeResult = ""
+end function
+CommandTable["write"] = @CmdWrite
+
+// ── append ───────────────────────────────────────────────────────
+// Replaces one specific existing line in a file, by the line number
+// "write <file> -l" just showed you — e.g. harvest wrote a wrong
+// password on line 3, "append creds.txt -l 3 -t user:realpass" fixes
+// just that line in place. -t's text can be a clip too (e.g. -t @fix)
+// since the main loop already substitutes any @name with a value
+// pipeVars holds before this ever runs (see phantom.src's token
+// substitution) — nothing special to do for that here.
+CmdAppend = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: append <file> -l <line#> -t <text>")
+        print(c.grey + "  e.g.  append creds.txt -l 3 -t user:realpass" + c.ennd)
+        print(c.grey + "  e.g.  append creds.txt -l 3 -t @fix   (replace with a clip's value)" + c.ennd)
+        return
+    end if
+
+    filePath = inp[1]
+    lineNum  = null
+    text     = null
+
+    i = 2
+    while i < inp.len
+        if inp[i] == "-l" and i + 1 < inp.len then
+            lineNum = inp[i+1].to_int
+            i = i + 2
+        else if inp[i] == "-t" and i + 1 < inp.len then
+            text = inp[i+1:].join(" ")
+            i = inp.len
+        else
+            i = i + 1
+        end if
+    end while
+
+    if lineNum == null or text == null then
+        print(c.yellow + "<b>append: need both -l <line#> and -t <text>" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    f = GetFile(filePath, myComp, true)
+    if not f then
+        print(c.yellow + "<b>append: file not found: " + filePath + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    content = f.get_content
+    if not content or content == null then content = ""
+    lines = content.split(char(10))
+    if lines.len > 0 and lines[-1] == "" then lines = lines[:-1]
+
+    if lineNum < 1 or lineNum > lines.len then
+        print(c.yellow + "<b>append: line " + lineNum + " out of range — file has " + lines.len + " line(s), see write " + filePath + " -l" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    lines[lineNum - 1] = text
+    f.set_content(lines.join(char(10)) + char(10))
+    print(c.lime + "  replaced line " + lineNum + " in " + filePath + c.ennd)
+end function
+CommandTable["append"] = @CmdAppend
