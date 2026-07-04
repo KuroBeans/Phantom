@@ -38,17 +38,21 @@ CommandTable["cascade"] = @CmdCascade
 
 CmdScanlan = function(inp)
     acceptComputer = inp.indexOf("-c") != null
+    skipPivot = inp.indexOf("-l") != null
     args = []
     for a in inp[1:]
-        if a != "-c" then args.push(a)
+        if a != "-c" and a != "-l" then args.push(a)
     end for
     if args.len == 2 then
-        ScanLan(args[0], args[1], acceptComputer)
+        ScanLan(args[0], args[1], acceptComputer, skipPivot)
     else
-        print("<b>Usage: scanlan [ip] [port] [opt:-c]")
+        print("<b>Usage: scanlan [ip] [port] [opt:-c] [opt:-l]")
         print(c.grey + "  direct ip: recon only — decodes candidates, caches for grab, doesn't touch the target" + c.ennd)
         print(c.grey + "  LAN ip: bounces + attempts overflow in the same run (like scan), auto-pivoting as needed" + c.ennd)
         print(c.grey + "  -c   accept computer objects (not just shells) — LAN targets only" + c.ennd)
+        print(c.grey + "  -l   scan locally instead of via a held remote shell — no auto-pivot, no" + c.ennd)
+        print(c.grey + "       held object required, bounces straight from wherever phantom itself" + c.ennd)
+        print(c.grey + "       is physically running (e.g. after jump)" + c.ennd)
     end if
 end function
 CommandTable["scanlan"] = @CmdScanlan
@@ -418,7 +422,7 @@ WStack = function(inp, localMode)
     print(c.grey + "  use stack/swap/pop to access" + c.ennd)
 end function
 
-ScanLan = function(ip, port, acceptComputer=false)
+ScanLan = function(ip, port, acceptComputer=false, skipPivot=false)
     if ip == "pt" then ip = publicTarget
     if ip == "lt" then ip = localTarget
     if not is_valid_ip(ip) then
@@ -437,16 +441,24 @@ ScanLan = function(ip, port, acceptComputer=false)
     // scan+attempt (ScanLanBounce/slb.src), not recon-only, since a
     // LAN bounce only gets one on-target run either way.
     if is_lan_ip(ip) then
-        if typeof(globals.object) != "shell" then
-            print(c.yellow + "<b>scanlan: need a remote shell to reach LAN ips" + c.ennd)
-            globals.pipeFailed = true
-            return
+        // -l means fully local — bounce from wherever phantom itself
+        // is physically running (e.g. after jump), skipping both the
+        // held-remote-shell requirement and auto-pivot entirely, since
+        // neither means anything once you're already standing there
+        if skipPivot then
+            print(c.grey + "  -l: scanning locally from wherever phantom itself is running" + c.ennd)
+        else
+            if typeof(globals.object) != "shell" then
+                print(c.yellow + "<b>scanlan: need a remote shell to reach LAN ips (or use -l to scan locally)" + c.ennd)
+                globals.pipeFailed = true
+                return
+            end if
+            if not EnsureLanPath(ip) then
+                globals.pipeFailed = true
+                return
+            end if
         end if
-        if not EnsureLanPath(ip) then
-            globals.pipeFailed = true
-            return
-        end if
-        ScanLanBounce(ip, portInt, null)
+        ScanLanBounce(ip, portInt, null, skipPivot)
         // slb already tried overflow during the scan — if it landed
         // something, push it straight to the stack instead of
         // discarding the result and making the caller run a separate
