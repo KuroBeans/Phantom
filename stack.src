@@ -69,6 +69,10 @@ CmdStack = function(inp)
             end if
             i = i + 1
         end for
+        // lets "stack | clip @b" capture the current stack as a named,
+        // reusable object-list — clip checks this before its normal
+        // string-pipeResult path (see CmdClip, vars.src)
+        globals.pipeObjResult = objectStack[:]
     end if
 end function
 CommandTable["stack"] = @CmdStack
