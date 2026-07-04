@@ -125,6 +125,16 @@ endfor
 
 **Not the same as `foreach`:** `foreach @list | cmd @each` is a separate, prompt-level construct (works outside macros too, straight at the interactive phantom prompt) — it queues one pipeline run per list item, substituting `@each`. The `for ... endfor` block above is macro-only and lets you name the loop variable yourself.
 
+**Iterating live objects, not just strings:** if `@list` is an object-list clip (from `stack | clip @b` — see the README's "Object-list clips" section) rather than a normal string clip, `for @x in @b ... endfor` behaves differently: it can't substitute a live shell/computer into `@x` as text, so instead it sets the active `object` to the current item for the duration of each iteration's body. Write the body the same way you would for `stackfor` — reference the held target implicitly (`harvest`, `scan pt 80`, etc.), not via `@x`.
+
+```
+// example: harvest every object wstack found
+stack | clip @b
+for @x in @b
+    harvest
+endfor
+```
+
 ## Switch
 
 ```
