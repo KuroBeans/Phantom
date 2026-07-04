@@ -656,8 +656,29 @@ CmdForeach = function(inp)
     else
         listVal = inp[1]
         if listVal[0:1] == "@" then
-            globals.pipeFailed = true
-            print(c.yellow + "<b>foreach: @" + listVal[1:] + " not set — use lanenum @" + listVal[1:] + " or clip @" + listVal[1:] + " first" + c.ennd)
+            // not a normal string clip (those get substituted before
+            // CmdForeach ever runs) — check for an object-list clip
+            // (e.g. from "stack | clip @b") before giving up. Reuses
+            // stackfor's own engine (phantom.src's main loop already
+            // drives stackforItems/stackforBody/stackforSaved) rather
+            // than reimplementing per-object iteration here — this is
+            // a single command per iteration, same shape stackfor
+            // already has, unlike the macro for-loop's multi-line body.
+            vnObj = listVal[1:]
+            gcoO = get_custom_object
+            if gcoO.hasIndex("objClips") and gcoO.objClips.hasIndex(vnObj) and gcoO.objClips[vnObj].len > 0 then
+                objItems = gcoO.objClips[vnObj]
+                globals.stackforSaved = globals.object
+                globals.stackforBody  = pipeQueue[0]
+                globals.pipeQueue = []
+                globals.stackforItems = objItems[1:]
+                globals.object = objItems[0]
+                globals.pipeQueue.push(stackforBody)
+                print(c.cyan + "<b>foreach: " + objItems.len + " object(s) — starting with " + objItems[0] + c.ennd)
+            else
+                globals.pipeFailed = true
+                print(c.yellow + "<b>foreach: @" + vnObj + " not set — use lanenum @" + vnObj + ", clip @" + vnObj + ", or stack | clip @" + vnObj + " first" + c.ennd)
+            end if
         else
             items = listVal.split(",")
             if items.len == 0 or (items.len == 1 and items[0] == "") then
@@ -785,41 +806,55 @@ CommandTable["rpub"] = @CmdRpub
 // ── ports ────────────────────────────────────────────────────────
 CmdPorts = function(inp)
     if inp.len < 2 then
-        print("<b>Usage: ports <ip> [port list]")
+        print("<b>Usage: ports <ip>[,ip2,...] [port list]")
         print(c.grey + "  e.g.  ports @t" + c.ennd)
         print(c.grey + "  e.g.  ports @t 80 22 443" + c.ennd)
+        print(c.grey + "  e.g.  ports @p 22   (@p a comma list, e.g. from randip 10 — checks every ip)" + c.ennd)
     else
-        tgt = inp[1]
+        // tgt may be a single ip or a comma-joined list (e.g. straight
+        // from randip's bulk mode) — split unconditionally so a lone ip
+        // still works (a 1-element list) and a real list no longer gets
+        // handed to net_use as one giant invalid "ip"
+        targets = inp[1].split(",")
         if inp.len >= 3 then
             portList = inp[2:]
         else
             portList = ["22", "25", "80", "1542", "3306", "3307"]
         end if
-        print(c.orange + "Scanning " + tgt + " on " + portList.len + " port(s)..." + c.ennd)
-        openPorts = []
-        for p in portList
-            ns = metaxploit.net_use(tgt, p.to_int)
-            if ns then
-                print(c.lime + "  [+] " + p + " open" + c.ennd)
-                openPorts.push(p)
-            else
-                print(c.grey + "  [-] " + p + " closed" + c.ennd)
+        print(c.orange + "Scanning " + targets.len + " ip(s) on " + portList.len + " port(s)..." + c.ennd)
+        openIps = []
+        lastOpenPort = ""
+        for tgt in targets
+            if tgt == "" then continue
+            openPorts = []
+            for p in portList
+                ns = metaxploit.net_use(tgt, p.to_int)
+                if ns then
+                    print(c.lime + "  [+] " + tgt + "  " + p + " open" + c.ennd)
+                    openPorts.push(p)
+                else
+                    print(c.grey + "  [-] " + tgt + "  " + p + " closed" + c.ennd)
+                end if
+            end for
+            if openPorts.len > 0 then
+                openIps.push(tgt)
+                lastOpenPort = openPorts[0]
             end if
         end for
-        if openPorts.len == 0 then
-            print(c.yellow + "<b>ports: no open ports found on " + tgt + c.ennd)
+        if openIps.len == 0 then
+            print(c.yellow + "<b>ports: no open ports found on " + inp[1] + c.ennd)
             globals.pipeFailed = true
         else
-            print(c.cyan + "ports: " + openPorts.len + " open — " + openPorts.join(", ") + c.ennd)
-            globals.pipeResult = tgt
-            pipeVars["port"] = openPorts[0]
-            globals.pipeVars["port"] = openPorts[0]
+            print(c.cyan + "ports: " + openIps.len + "/" + targets.len + " ip(s) with an open port — " + openIps.join(", ") + c.ennd)
+            globals.pipeResult = openIps.join(",")
+            pipeVars["port"] = lastOpenPort
+            globals.pipeVars["port"] = lastOpenPort
             if storeVar != null then
                 gco = get_custom_object
                 if not gco.hasIndex("clips") then gco.clips = {}
-                gco.clips[storeVar] = tgt
-                globals.pipeVars[storeVar] = tgt
-                print(c.lime + "  @" + storeVar + " = " + tgt + c.ennd)
+                gco.clips[storeVar] = openIps.join(",")
+                globals.pipeVars[storeVar] = openIps.join(",")
+                print(c.lime + "  @" + storeVar + " = " + openIps.join(",") + c.ennd)
             end if
         end if
     end if
@@ -1072,4 +1107,15 @@ CommandTable["noop"] = @CmdNoop
 CommandTable["pass"] = @CmdNoop
 
 
+CmdLanRecon = function(inp)
+lsBin = currentPath + "/ScanLan.exe"
+if not myComp.File(lsBin) then
+    print(c.yellow + "<b>yourcmd: binary not found at " + lsBin + c.ennd)
+    print(c.grey + "  build it first: build /root/ai/tp/yourbinary.src /root/ai/tp" + c.ennd)
+    return
+end if
 
+myShell.scp(lsBin, "/home/guest", object)
+object.launch("/home/guest/ScanLan.exe")
+end function
+CommandTable["lanrecon"] = @CmdLanRecon
