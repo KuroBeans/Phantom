@@ -925,12 +925,17 @@ end function
 CommandTable["rdecipher"] = @CmdRdecipher
 
 CmdLanenum = function(inp)
+    localMode = inp.indexOf("-l") != null
+    args = []
+    for a in inp[1:]
+        if a != "-l" then args.push(a)
+    end for
     sv = null
-    if inp.len >= 2 then
-        sv = inp[1]
+    if args.len >= 1 then
+        sv = args[0]
         if sv[0:1] == "@" then sv = sv[1:]
     end if
-    LanEnum(sv)
+    LanEnum(sv, localMode)
 end function
 CommandTable["lanenum"] = @CmdLanenum
 
@@ -1285,7 +1290,90 @@ end function
 // -- LanEnum -------------------------------------------------------
 // Enumerates LAN from remote shell perspective, prints IPs,
 // optionally clips the list to a named @var.
-LanEnum = function(storeVar)
+LanEnum = function(storeVar, localMode=false)
+    if localMode then
+        // no upload/build/launch needed — if you jumped phantom itself
+        // onto this machine, it's already running here, so the same
+        // discovery walk can just run in-process against myComp's own
+        // router instead of writing/building a script on a held object
+        print(c.orange + "Enumerating LAN locally..." + c.ennd)
+        deviceList = []
+        getDevicesLE = function(r)
+            if r == null then return
+            ip = r.local_ip
+            if deviceList.indexOf(ip) == null then deviceList.push(ip)
+            devices = r.devices_lan_ip
+            if not devices then return
+            for device in devices
+                if device == ip then continue
+                if deviceList.indexOf(device) != null then continue
+                subRouter = get_router(device)
+                subSwitch = get_switch(device)
+                if subRouter then
+                    deviceList.push(device)
+                    getDevicesLE(subRouter)
+                else if subSwitch then
+                    deviceList.push(device)
+                    getDevicesLE(subSwitch)
+                else
+                    deviceList.push(device)
+                end if
+            end for
+        end function
+
+        router = get_router(myComp.public_ip)
+        if not router then router = get_router(myComp.local_ip)
+        if not router then
+            print(c.yellow + "<b>lanenum: could not get local router" + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+        getDevicesLE(router)
+
+        // fill IP gaps — same as remote mode
+        gapList = []
+        for existingIp in deviceList
+            parts = existingIp.split("\\.")
+            if parts.len < 4 then continue
+            subnet = parts[0] + "." + parts[1] + "." + parts[2] + "."
+            lastOctet = parts[3].to_int
+            i = 1
+            while i < lastOctet
+                candidate = subnet + i
+                if deviceList.indexOf(candidate) == null and gapList.indexOf(candidate) == null then
+                    gapList.push(candidate)
+                end if
+                i = i + 1
+            end while
+        end for
+        for gapIp in gapList
+            deviceList.push(gapIp)
+        end for
+
+        if deviceList.len == 0 then
+            print(c.yellow + "<b>lanenum: no devices found" + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+
+        print(c.cyan + "  " + deviceList.len + " device(s) found:" + c.ennd)
+        for ip in deviceList
+            print(c.white + "  " + ip + c.ennd)
+        end for
+
+        joined = deviceList.join(",")
+        globals.pipeResult = joined
+        if storeVar != null and storeVar != "" then
+            gco2 = get_custom_object
+            if not gco2.hasIndex("clips") then gco2.clips = {}
+            gco2.clips[storeVar] = joined
+            pipeVars[storeVar] = joined
+            globals.pipeVars[storeVar] = joined
+            print(c.lime + "  clipped " + deviceList.len + " ip(s) to @" + storeVar + c.ennd)
+        end if
+        return
+    end if
+
     if typeof(object) != "shell" then
         print(c.yellow + "<b>lanenum: need remote shell" + c.ennd)
         globals.pipeFailed = true
@@ -1615,22 +1703,7 @@ end function
 // Writes a mini scanner to the held shell, launches it in context,
 // reads vuln results back via gco. Lets metaxploit.net_use run from
 // inside the target network so cross-subnet LAN IPs are reachable.
-ScanLanBounce = function(lanIp, port, libName)
-    rcomp = object.host_computer
-    print(c.orange + "Bouncing scan to " + lanIp + ":" + port + " via " + rcomp.public_ip + "..." + c.ennd)
-
-    // upload metaxploit + slb once per host, then leave them in place —
-    // EnsureLanPath calls this once per candidate port per hop while
-    // pivoting, and re-scp'ing (then deleting) the *same* unchanged
-    // binary on every single attempt was the dominant cost. Cleanup
-    // trade-off: these now persist in /home/guest for the rest of the
-    // session instead of being wiped after each run.
-    mxf = rcomp.File("/home/guest/metaxploit.so")
-    if not mxf then
-        myShell.scp(currentPath + "/metaxploit.so", "/home/guest", object)
-        mxf = rcomp.File("/home/guest/metaxploit.so")
-    end if
-
+ScanLanBounce = function(lanIp, port, libName, useLocal=false)
     slbBin = currentPath + "/slb"
     if not myComp.File(slbBin) then
         print(c.yellow + "<b>scan: slb binary not found at " + slbBin + c.ennd)
@@ -1639,21 +1712,46 @@ ScanLanBounce = function(lanIp, port, libName)
         return
     end if
 
-    bf = rcomp.File("/home/guest/slb")
-    if not bf then
-        print(c.grey + "  uploading scanner..." + c.ennd)
-        uploadResult = myShell.scp(slbBin, "/home/guest", object)
-        if typeof(uploadResult) == "string" and uploadResult != "" then
-            print(c.yellow + "<b>scan: upload failed: " + uploadResult + c.ennd)
+    if useLocal then
+        // no upload/scp needed at all — if you jumped phantom itself
+        // onto this machine, slb and metaxploit.so already sit right
+        // alongside it at currentPath, so it can just launch in place
+        rcomp = myComp
+        print(c.orange + "Bouncing scan to " + lanIp + ":" + port + " locally..." + c.ennd)
+        launchPath = slbBin
+    else
+        rcomp = object.host_computer
+        print(c.orange + "Bouncing scan to " + lanIp + ":" + port + " via " + rcomp.public_ip + "..." + c.ennd)
+
+        // upload metaxploit + slb once per host, then leave them in place —
+        // EnsureLanPath calls this once per candidate port per hop while
+        // pivoting, and re-scp'ing (then deleting) the *same* unchanged
+        // binary on every single attempt was the dominant cost. Cleanup
+        // trade-off: these now persist in /home/guest for the rest of the
+        // session instead of being wiped after each run.
+        mxf = rcomp.File("/home/guest/metaxploit.so")
+        if not mxf then
+            myShell.scp(currentPath + "/metaxploit.so", "/home/guest", object)
+            mxf = rcomp.File("/home/guest/metaxploit.so")
+        end if
+
+        bf = rcomp.File("/home/guest/slb")
+        if not bf then
+            print(c.grey + "  uploading scanner..." + c.ennd)
+            uploadResult = myShell.scp(slbBin, "/home/guest", object)
+            if typeof(uploadResult) == "string" and uploadResult != "" then
+                print(c.yellow + "<b>scan: upload failed: " + uploadResult + c.ennd)
+                globals.pipeFailed = true
+                return
+            end if
+            bf = rcomp.File("/home/guest/slb")
+        end if
+        if not bf then
+            print(c.yellow + "<b>scan: slb not found on target after upload" + c.ennd)
             globals.pipeFailed = true
             return
         end if
-        bf = rcomp.File("/home/guest/slb")
-    end if
-    if not bf then
-        print(c.yellow + "<b>scan: slb not found on target after upload" + c.ennd)
-        globals.pipeFailed = true
-        return
+        launchPath = "/home/guest/slb"
     end if
 
     gco.slbIp      = lanIp
@@ -1676,7 +1774,7 @@ ScanLanBounce = function(lanIp, port, libName)
     gco.deadLibs   = globals.deadLibs
     gco.edb        = globals.edb
     gco.slbDeadLib = false
-    object.launch("/home/guest/slb")
+    if useLocal then myShell.launch(launchPath) else object.launch(launchPath)
     // poll instead of a fixed wait — stop the moment slb actually
     // finishes (success or failure) instead of always burning the
     // full timeout; EnsureLanPath calls this once per candidate port
@@ -3070,7 +3168,8 @@ ShowHelp = function(flag)
         print(char(10) + c.lime + "<b>-- HACKING --------------------------------------------------" + c.ennd + char(10))
         print(c.yellow+"<b>edb</b>"+c.ennd+"        edb  |  edb use/search/add/del/clear  (exploit database)")
         print(c.yellow+"<b>scan</b>"+c.ennd+"       scan [ip] [port] [lan-ip] -lib [lib.so] [opt:mem] [opt:val]")
-        print(c.yellow+"<b>scanlan</b>"+c.ennd+"    scanlan [ip] [port]  (direct ip: recon only, caches for grab; LAN ip: auto-pivots + attempts)")
+        print(c.yellow+"<b>scanlan</b>"+c.ennd+"    scanlan [ip] [port] [opt:-c] [opt:-l]  (direct ip: recon only, caches for grab; LAN ip: auto-pivots + attempts)")
+        print(c.grey+"              -l: scan locally instead of via a held remote shell (e.g. after jump)"+c.ennd)
         print(c.yellow+"<b>grab</b>"+c.ennd+"       grab [ip] [port] [mem] [val] [opt:inject]")
         print(c.yellow+"<b>exploit</b>"+c.ennd+"    exploit [ip] [port] [opt:-c]  (interactive: pick a candidate + inject value, direct ips only)")
 		print(c.yellow+"<b>qg</b>"+c.ennd+"         qg [ip] [port] (quick grab a shell)")
@@ -3084,18 +3183,22 @@ ShowHelp = function(flag)
         print(c.yellow+"<b>wstack</b>"+c.ennd+"     wstack [opt:-l] [opt:libname]  (bounce LAN, push computers to stack)")
         print(c.grey+"              libname defaults to init.so, falls back to libhttp.so if missing"+c.ennd)
         print(c.yellow+"<b>cascade</b>"+c.ennd+"    cascade  (wstack from every shell on stack simultaneously)")
-        print(c.yellow+"<b>lanenum</b>"+c.ennd+"    lanenum [opt:@var]  (list LAN IPs, clip to @var)")
+        print(c.yellow+"<b>lanenum</b>"+c.ennd+"    lanenum [opt:-l] [opt:@var]  (list LAN IPs, clip to @var)")
+        print(c.grey+"              -l: enumerate locally instead of via a held remote shell (e.g. after jump)"+c.ennd)
         print(c.yellow+"<b>ipenum</b>"+c.ennd+"     ipenum [port] [opt:@var]  (find LAN IPs with port open, clip to @var)")
         print(c.yellow+"<b>foreach</b>"+c.ennd+"    foreach @list | cmd @each ...  (run pipeline per item)")
         print(c.yellow+"<b>mac</b>"+c.ennd+"        mac <name>  |  mac list  |  mac show <name>  (run macro from /root/ai/mac/)")
         print(c.yellow+"<b>pwnlan</b>"+c.ennd+"     pwnlan  (exploit all LAN devices)")
-        print(c.yellow+"<b>netmap</b>"+c.ennd+"     netmap  (LAN recon only, no attacking — fast; scanlan/grab a target after)")
+        print(c.yellow+"<b>netmap</b>"+c.ennd+"     netmap [opt:-l]  (LAN recon only, no attacking — fast; scanlan/grab a target after)")
+        print(c.grey+"              -l: map locally instead of via a held remote shell/computer (e.g. after jump)"+c.ennd)
         print(c.yellow+"<b>hacklan</b>"+c.ennd+"    hacklan [lan-ip]  (bounce to LAN device)")
         print(c.yellow+"<b>autoharvest</b>"+c.ennd+"  autoharvest [hops] [max_targets]")
         print(c.yellow+"<b>buildrt</b>"+c.ennd+"    build rainbow table in memory")
         print(c.yellow+"<b>rtgen</b>"+c.ennd+"      rtgen  (build + write rainbow table to ~/rt/)")
         print(c.yellow+"<b>crack</b>"+c.ennd+"      crack [hash]")
         print(c.yellow+"<b>jump</b>"+c.ennd+"       jump [opt:--rshell]  (copy phantom to target)")
+        print(c.yellow+"<b>leave</b>"+c.ennd+"      leave  |  leave -lib [name]  (leave held shell/computer, or a lib name, for another phantom session to claim)")
+        print(c.yellow+"<b>claim</b>"+c.ennd+"      claim  (pick up whatever leave left — shell/computer lands in object, a lib gets loaded fresh into globals.activeLib)")
         print(c.yellow+"<b>plant</b>"+c.ennd+"      plant [opt:lib] [opt:dest]  (upload lib from /root/InsecureLibs)")
         print(c.yellow+"<b>rshell</b>"+c.ennd+"     rshell  |  rshell start/stop/init/infect/info")
     end if
@@ -3388,8 +3491,18 @@ ArLocal = function(userArg)
     result = ChainSaw.crack(true)
     if result then
         globals.lObject = result
+        // also leave it in gco for another phantom instance to pick up
+        // via "claim" — e.g. jump to a target, autoroot -l yourself
+        // there, then run claim from your original session to have
+        // that root shell land in globals.object back home. gco is a
+        // persistent, player-scoped store (same reason slb.src/wsx.src
+        // already hand live shell/computer objects back across a
+        // launch boundary between two different machines), so this
+        // works the same way across two independent phantom sessions.
+        gco.claimShell = result
         print(c.lime + "<b>local " + user + " shell acquired!" + c.ennd)
         print(c.gold + "  password: " + ChainSaw.password + c.ennd)
+        print(c.grey + "  left for pickup — run 'claim' from another phantom session to grab it" + c.ennd)
         globals.pipeFailed = false
     else
         print(c.yellow + "<b>ar -l: failed to crack local " + user + " password" + c.ennd)
