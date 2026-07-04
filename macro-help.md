@@ -1,580 +1,211 @@
-# PHANTOM MACRO SYSTEM — Complete Reference
+# Writing phantom macros
 
-## Quick Start
+A macro is a plain-text script — think a `.bat` file — that runs a sequence of phantom commands with variables, conditionals, loops, and functions. This doc covers how to write one; run `macref` in phantom any time for a terse in-game cheat sheet of the same syntax.
 
-```greyscript
-mac list                    // List all macros in /root/ai/mac/
-mac show pwn_lan            // Preview macro code
-mac pwn_lan @target 0       // Run macro with arguments
-macref                      // Show this reference
+## Where they live
+
+Macros are files in `/root/ai/mac/` on the machine phantom is running on. The filename (minus `.txt`) is the name you invoke it by:
+
+```
+/root/ai/mac/hunt.txt      ->  mac hunt
+/root/ai/mac/rootall.txt   ->  mac rootall
 ```
 
----
+The `.txt` extension is a convention, not a hard requirement — `mac`/`call` will also find a file with no extension if `<name>.txt` doesn't exist.
 
-## Variables & Clipping
+## Creating one
 
-### Store & Retrieve
-```greyscript
-clip @myvar value           // Store a value
-@myvar                      // Use in commands
-@myvar.len                  // Get string length (e.g., "5")
+1. Open the in-game code editor and create a text file at `/root/ai/mac/<name>.txt`.
+2. Write one phantom command per line (see syntax below).
+3. Save it — no build step needed, macros are read and compiled fresh every time you run them.
+
+```
+mac list           # see every macro currently in /root/ai/mac/
+mac show <name>    # preview a macro's lines without running it
+mac <name> [args]  # run it
 ```
 
-### Auto-Clipping (outputs → variables)
-```greyscript
-nslookup example.com @ips   // Result auto-clipped to @ips
-whoismail 8.8.8.8 @email   // Email auto-clipped to @email
-ipenum 22 @ssh_hosts        // Open port IPs clipped to @ssh_hosts
+## Arguments
+
+Whatever you pass after the macro name shows up inside the macro as `$1` through `$9`:
+
+```
+// /root/ai/mac/hunt.txt
+// usage: mac hunt <port>
+netmap -l
+scan pt $1
+grab pt $1
 ```
 
-### Macro Arguments
-```greyscript
-// In macro file /root/ai/mac/exploit.txt:
-scan $1 $2
-grab $1 $2 [mem] [val]
-
-// Call it:
-mac exploit 203.0.113.45 0
-// $1 = 203.0.113.45, $2 = 0
+```
+mac hunt 80
 ```
 
----
+If a macro references `$4` but you only passed 3 args, phantom prints a warning and leaves it blank rather than failing silently.
 
-## Pipes & Flow Control
+## Comments
 
-### Pipe (|) — Stop on Fail
-```greyscript
-scan pt 0 | grab pt 0 [mem] [val]
-// If scan fails, grab is skipped
-```
+A line starting with `//` is ignored entirely (not even shown to the parser) — same convention as the rest of the codebase.
 
-### AND (&&) — Same as Pipe
-```greyscript
-scan pt 0 && grab pt 0 [mem] [val]
-// Equivalent to pipe
-```
+## Flow between commands
 
-### Semicolon (;) — Always Run Both
-```greyscript
-scan pt 0 ; grab pt 0 [mem] [val]
-// Even if scan fails, grab runs (ignore fail)
-```
+These work on a single line, no block needed:
 
----
+| Syntax | Meaning |
+|---|---|
+| `cmd1 \| cmd2` | pipe — stop the line if `cmd1` fails |
+| `cmd1 && cmd2` | AND — stop if `cmd1` fails |
+| `cmd1 ; cmd2` | always run both, regardless of failure |
 
 ## Conditionals
 
-### Block Conditionals
-```greyscript
-if root then
-  print "You are root"
-end if
+One-liner:
+```
+if <cond> then <cmd>
+if <cond> | <cmd>          // same thing, | instead of then
+```
 
-if shell then
-  rls /
-elif computer then
-  ifconfig
+Block form:
+```
+if <cond>
+    ...
+elif <cond>
+    ...
 else
-  print "No object"
-end if
+    ...
+endif
 ```
 
-### One-Liner Conditionals
-```greyscript
-if root then autoroot
-if shell then rls /
-if @target then scan @target 0
-if failed then print "error"
-```
+**Conditions:**
+| Condition | True when |
+|---|---|
+| `root` | holding a shell **and** it has root |
+| `guest` | holding a shell and it doesn't have root |
+| `shell` | held object is a shell |
+| `computer` | held object is a computer |
+| `object` | anything at all is held |
+| `stack` | the object stack has at least one entry |
+| `target` (or `pt`) | a public target is set |
+| `failed` (or `pipefailed`) | the last pipeline step failed |
+| `@var` | the clip is set and non-empty |
+| `true` / `false` | constants |
 
-### Supported Conditions
-```
-root            // Have root shell
-guest           // Have guest shell (not root)
-shell           // Holding any shell
-computer        // Holding computer object
-object          // Have any remote object
-stack           // Stack is not empty
-target          // Public target set
-@var            // Variable is set and not empty
-failed          // Previous command failed
-true / false    // Literal boolean
-```
+Prefix any condition with `not` (or `no`) to negate it. Conditions also support comparisons: `stack >= 3`, `shell == root`, `object == null`, `@count == 5`, etc.
 
-### Comparisons
-```greyscript
-if stack > 5 then print "stack full"
-if stack == 3 then pop
-if @count <= 10 then repeat @count | scan pt 0
-if root and shell then autoroot
-if not root then print "need root"
+Combine with `and`/`or` (no parentheses, evaluated left to right by whichever operator appears first):
 ```
-
-**Operators**: `==`, `!=`, `<`, `>`, `<=`, `>=`, `and`, `or`, `not`
-
----
+if root and stack >= 1 then autoharvest
+```
 
 ## Loops
 
-### While Loop
-```greyscript
-while root max 10
-  rls /
-  print "still root"
-endwhile
-// Loops while root is true, max 10 iterations
 ```
+while <cond> [max N]
+    ...
+endwhile
 
-### Until Loop
-```greyscript
-until failed max 5
-  scan pt 0
+until <cond> [max N]        // inverse of while
+    ...
 enduntil
-// Loops until failed becomes true
-```
 
-### Repeat Loop
-```greyscript
-repeat 5
-  ping pt
+repeat N
+    ...
 endrepeat
-// Loop exactly 5 times
-```
 
-### For..In Loop (Comma List)
-```greyscript
-clip @targets "203.0.113.1,203.0.113.2,203.0.113.3"
-for @ip in @targets
-  scan @ip 0
+for @var in @list           // iterates a comma-separated clip
+    ...                      // reference the current item as @var
 endfor
-// Iterate each comma-separated value
-```
 
-### For..In Loop (Numeric Range)
-```greyscript
-for @n in range(1,10)
-  ping 192.168.1.@n
+for @var in range(5,10)      // iterates 5..10
+    ...
 endfor
-// Loop from 1 to 10 inclusive
 ```
 
-### Loop Control
-```greyscript
-while root max 100
-  if failed then break      // Exit loop immediately
-  if @attempt > 5 then continue  // Skip to next iteration
-endwhile
+`max N` on `while`/`until` caps iterations as a safety net (default cap is effectively unlimited). `break`/`continue` work inside any loop.
+
+**Not the same as `foreach`:** `foreach @list | cmd @each` is a separate, prompt-level construct (works outside macros too, straight at the interactive phantom prompt) — it queues one pipeline run per list item, substituting `@each`. The `for ... endfor` block above is macro-only and lets you name the loop variable yourself.
+
+## Switch
+
 ```
-
----
-
-## Switch/Case
-
-```greyscript
-switch @objecttype
-case shell
-  whoami
-  rls /
-case computer
-  ifconfig
+switch @var
+case value1
+    ...
+case value2
+    ...
 default
-  print "no object"
+    ...
 endswitch
 ```
 
----
+## Error handling
 
-## Error Handling (Try/Catch)
-
-### Basic Try/Catch
-```greyscript
+```
 try
-  scan pt 0
-  grab pt 0 [mem] [val]
+    ...
+    _throw "something went wrong"
 catch @err
-  print "exploit failed: @err"
+    echo @err
 endtry
 ```
 
-### Throwing Errors
-```greyscript
-try
-  if not object then _throw "no shell"
-  autoroot
-catch @e
-  print "error: @e"
-endtry
+`catch` without a variable name (`catch` alone, no `@err`) still catches, it just doesn't capture the message.
+
+## Functions
+
+Inline functions, defined and callable within the same macro (or from another macro, since `call` looks up both):
+
 ```
-
-### Nested Try/Catch
-```greyscript
-try
-  try
-    scan pt 0
-  catch @e1
-    print "scan failed"
-  endtry
-  grab pt 0 [mem] [val]
-catch @e2
-  print "grab failed"
-endtry
-```
-
----
-
-## Inline Functions
-
-### Define Function
-```greyscript
-func exploit_target(ip,port)
-  scan @ip @port
-  grab @ip @port [mem] [val]
-  if root then autoroot
-endfunc
-```
-
-### Call Function
-```greyscript
-call exploit_target 203.0.113.45 80
-// Or with variables:
-$(call exploit_target @target 0)
-```
-
-### Return Value
-```greyscript
-func get_shell_status
-  if shell then _return "connected"
-  if root then _return "root"
-  _return "disconnected"
+func escalate_and_grab(ip, port)
+    scan $1 $2
+    grab $1 $2
+    if root then echo "got root on $1"
 endfunc
 
-call get_shell_status
-// Result stored in pipeResult
+call escalate_and_grab 1.2.3.4 80
 ```
 
----
+`_return <value>` inside a func sets the value `call`/`macall` gets back. `call`/`macall` also runs a *file* macro by name (not just an inline `func`) — same command either way, it checks inline funcs first, then `/root/ai/mac/`.
 
-## File-Based Macros
+## Menus
 
-### Create Macro File
-Save to `/root/ai/mac/your_macro.txt`:
+Interactive choice prompt, pauses the macro until you pick one:
 
-```greyscript
-// Single target pivot
-// Usage: mac pivot [ip] [port]
-clip @target $1
-clip @port $2
-
-scan @target @port
-if failed then
-  print "scan failed"
-  _return "failed"
-end if
-
-grab @target @port [mem] [val]
-if root then
-  autoroot
-  enum -r
-end if
 ```
-
-### Call It
-```greyscript
-mac pivot 203.0.113.45 0
-```
-
----
-
-## Foreach Iterator
-
-```greyscript
-clip @lanips "192.168.1.1,192.168.1.2,192.168.1.3"
-foreach @lanips | scan @each 0
-// Runs: scan 192.168.1.1 0
-//       scan 192.168.1.2 0
-//       scan 192.168.1.3 0
-```
-
----
-
-## Interactive Menus
-
-```greyscript
-menu "Choose your action"
-  Scan Router | scan pt 0
-  Grab Shell | grab pt 0 [mem] [val]
-  Escalate | autoroot
-  View Stack | stack
+menu Pick a target
+1 | scan pt 80
+2 | scan pt 8080
+q | exit
 endmenu
 ```
 
-User selects with number or label.
+Each line is `<label> | <command>` — typing the label at the prompt runs that command and resumes the macro.
 
----
+## Misc
 
-## Real-World Examples
-
-### Example 1: Auto-Escalate Workflow
-```greyscript
-set @target
-nmap @target
-scan @target 0
-if failed then print "no exploits found"
-grab @target 0 [mem] [val]
-if shell then
-  autoroot
-  enum -r
-  push
-else
-  print "failed to get shell"
-end if
+```
+sleep 5     // wait 5 seconds
+pause       // wait for Enter
 ```
 
-### Example 2: LAN Sweep with Error Handling
-Save as `/root/ai/mac/sweep.txt`:
+## A complete example
 
-```greyscript
-// Usage: mac sweep [port]
-clip @port $1
-lanenum @lanips
-
-for @ip in @lanips
-  try
-    scan @ip @port
-    grab @ip @port [mem] [val]
-    if root then
-      print "[+] @ip ROOTED"
-      push
-    end if
-  catch @err
-    print "[-] @ip: @err"
-  endtry
-endfor
-
-print "sweep complete"
-stack
 ```
-
-Call it: `mac sweep 22`
-
-### Example 3: Retry Logic with Sleep
-```greyscript
-clip @attempts 0
-while @attempts < 3 max 3
-  print "attempt @attempts"
-  scan pt 0
-  if not failed then break
-  sleep 2
-  clip @attempts $(@attempts + 1)
-endwhile
-
-if failed then
-  print "3 attempts failed"
-else
-  grab pt 0 [mem] [val]
-end if
-```
-
-### Example 4: Multi-Target Dictionary Attack
-```greyscript
-buildrt 3 3 14              // Build bigger rainbow table
-clip @targets "203.0.113.1,203.0.113.2,203.0.113.3"
+// /root/ai/mac/rootall.txt
+// usage: mac rootall
+echo "mapping local network..."
+netmap -l
+lanenum -l @targets
 
 for @ip in @targets
-  try
-    scan @ip 22
-    grab @ip 22 [mem] [val]
-    if shell then
-      autoroot
-      push
-    end if
-  catch @e
-    print "[-] @ip failed"
-  endtry
+    scan @ip 80
+    if root then
+        echo "rooted @ip"
+    else
+        scan @ip 8080
+        if root then echo "rooted @ip via 8080"
+    endif
 endfor
 
-astack                      // Escalate all at once
+echo "done"
 ```
-
----
-
-## Variable Operations
-
-### Implicit Math
-```greyscript
-clip @count 5
-repeat @count | ping pt
-// Converts @count to number automatically
-```
-
-### String Expansion
-```greyscript
-clip @base 192.168.1
-clip @last 100
-ping @base.@last
-// Results in: ping 192.168.1.100
-```
-
-### List Length
-```greyscript
-clip @ips "1.1.1.1,2.2.2.2,3.3.3.3"
-if @ips.len > 5 then
-  print "too many targets"
-end if
-// @ips.len = "3"
-```
-
----
-
-## Tips & Tricks
-
-### 1. Chain Commands Efficiently
-```greyscript
-randip 10 | ipenum 22 @ssh_hosts
-// Generate 10 IPs → filter by port 22 → clip to @ssh_hosts
-```
-
-### 2. Reuse Variables Across Macros
-```greyscript
-clip @global_target 203.0.113.45
-mac exploit @global_target     // Passed as $1
-```
-
-### 3. Conditional Piping
-```greyscript
-if shell then
-  rls / | rgrep password @creds
-else
-  print "need shell first"
-end if
-```
-
-### 4. Silent Macro Mode
-Macros run non-interactively (no prompts), perfect for automation:
-```greyscript
-nmap pt              // Won't ask "Set as target?" when in macro
-scan pt 0            // Runs silently
-```
-
-### 5. Break Out Early
-```greyscript
-while true max 100
-  grab pt 0 [mem] [val]
-  if shell then break
-  sleep 1
-endwhile
-```
-
-### 6. Nested Calls
-```greyscript
-func full_exploit(ip)
-  scan @ip 0
-  $(call grab_shell @ip 0)
-endfunc
-
-func grab_shell(ip, port)
-  grab @ip @port [mem] [val]
-  if root then autoroot
-endfunc
-```
-
----
-
-## Common Patterns
-
-### Pattern 1: Scan → Grab → Root
-```greyscript
-scan pt 0
-grab pt 0 [mem] [val]
-autoroot
-enum -r
-```
-
-### Pattern 2: Iterate & Attack
-```greyscript
-for @ip in @lanips
-  scan @ip 0
-  grab @ip 0 [mem] [val]
-endfor
-astack
-```
-
-### Pattern 3: Resilient Loop
-```greyscript
-while true max 50
-  try
-    scan @ip 0
-    grab @ip 0 [mem] [val]
-    if shell then break
-  catch @e
-    print "retry..."
-    sleep 2
-  endtry
-endwhile
-```
-
-### Pattern 4: Conditional Stack
-```greyscript
-if shell then push
-if root then push
-stack
-if objectStack > 5 then astack
-```
-
----
-
-## Debugging
-
-### Print Values
-```greyscript
-clip @myvar "test"
-print @myvar            // Output: test
-```
-
-### Check Conditions
-```greyscript
-if root then print "root" else print "not root"
-if shell then print "shell" else print "no shell"
-if @var then print "@var set" else print "@var empty"
-```
-
-### Use Temporary Variables
-```greyscript
-clip @debug "starting exploit"
-print @debug
-// ... do stuff ...
-clip @debug "exploit complete"
-print @debug
-```
-
----
-
-## Macro File Locations
-
-All macros stored in: `/root/ai/mac/`
-
-Filename format: `name.txt` or just `name`
-
-Example file: `/root/ai/mac/pwn_lan.txt`
-
-Call it: `mac pwn_lan [args]`
-
----
-
-## Summary
-
-| Feature | Syntax | Example |
-|---------|--------|---------|
-| **Variables** | `clip @var value` | `clip @target 8.8.8.8` |
-| **Expand** | `@varname` | `scan @target 0` |
-| **Pipe** | `cmd1 \| cmd2` | `scan pt 0 \| grab pt 0 [m] [v]` |
-| **If** | `if COND then CMD` | `if root then autoroot` |
-| **While** | `while COND max N ... endwhile` | `while root max 10 ... endwhile` |
-| **For** | `for @var in LIST ... endfor` | `for @ip in @lanips ... endfor` |
-| **Try** | `try ... catch @e ... endtry` | `try scan pt 0 catch @err print @err endtry` |
-| **Func** | `func name ... endfunc` | `func exploit(ip) scan @ip 0 endfunc` |
-| **Menu** | `menu TITLE ... endmenu` | `menu "Pick" ... Scan \| scan pt 0 ... endmenu` |
-
----
-
-**For more help**: Type `macref` in phantom to see this reference in-game.
