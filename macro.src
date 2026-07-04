@@ -801,6 +801,33 @@ HandleForLine = function(line)
     expr    = segs[2]
     body    = segs[3]
 
+    // object-list clip (e.g. from "stack | clip @b")? — iterate live
+    // objects, setting globals.object each round (same idea stackfor
+    // already uses), instead of string-substituting varName. Can't
+    // encode live objects back into the __for__ line's own text the
+    // way remaining string items get comma-joined in below, so the
+    // remainder rides in a side-channel global between __forobj__
+    // pops instead (see HandleForObjLine).
+    if expr.len > 1 and expr[0:1] == "@" then
+        vnObj = expr[1:]
+        gcoO = get_custom_object
+        if gcoO.hasIndex("objClips") and gcoO.objClips.hasIndex(vnObj) and gcoO.objClips[vnObj].len > 0 then
+            objItems = gcoO.objClips[vnObj]
+            objBodyLines = []
+            if body != "" then objBodyLines = body.split(char(7))
+            globals.object = objItems[0]
+            if objItems.len > 1 then
+                globals.macroForObjItems = objItems[1:]
+                globals.macroForObjBody  = body
+                globals.macroForObjVar   = varName
+                globals.macroQueue = objBodyLines + ["__forobj__"] + globals.macroQueue
+            else
+                globals.macroQueue = objBodyLines + globals.macroQueue
+            end if
+            return
+        end if
+    end if
+
     items = []
     if expr.len >= 6 and expr[:6] == "range(" then
         inner = expr[6:]
@@ -841,6 +868,26 @@ HandleForLine = function(line)
         nextEnc = "__for__" + char(1) + varName + char(1) + remaining.join(",") + char(1) + body
         globals.macroQueue = bodyLines + [nextEnc] + globals.macroQueue
     else
+        globals.macroQueue = bodyLines + globals.macroQueue
+    end if
+end function
+
+// ── HandleForObjLine ────────────────────────────────────────────────
+// Continuation for an object-list "for @x in @objclip" loop — pops the
+// next item off the side-channel globals.macroForObjItems (seeded by
+// HandleForLine above) and re-queues the same body for it.
+HandleForObjLine = function()
+    items = globals.macroForObjItems
+    if items.len == 0 then return
+    body = globals.macroForObjBody
+    bodyLines = []
+    if body != "" then bodyLines = body.split(char(7))
+    globals.object = items[0]
+    if items.len > 1 then
+        globals.macroForObjItems = items[1:]
+        globals.macroQueue = bodyLines + ["__forobj__"] + globals.macroQueue
+    else
+        globals.macroForObjItems = []
         globals.macroQueue = bodyLines + globals.macroQueue
     end if
 end function
