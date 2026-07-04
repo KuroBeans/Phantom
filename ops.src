@@ -3463,10 +3463,44 @@ RTGen = function(orderArg, minLenArg, maxLenArg)
     print(c.green + "rtgen: " + gco.rt.len + " total entries" + c.ennd)
 end function
 
+// ── RtLearn ──────────────────────────────────────────────────────
+// Called whenever CrackHash cracks a hash the rainbow table didn't
+// already have (i.e. via gco.crypto.decipher, the slow official
+// cracker) — memoizes it into gco.rt for instant reuse this session,
+// AND appends it to a plain wordlist file in currentPath so
+// buildRainbowTable's own wordlist-import step (it already scans
+// every .txt/.lst file there — see the "import any .txt or .lst
+// wordlist" loop above) picks it back up on the next buildrt/rtgen
+// run, even though that wipes gco.rt clean first. This is what turns
+// every crack into a permanent addition to the password db instead of
+// a one-off lookup that's forgotten the moment gco.rt regenerates.
+RtLearn = function(hash, pw)
+    if not pw or pw == "" then return
+    if not gco.hasIndex("rt") or gco.rt == null then gco.rt = {}
+    gco.rt[hash] = pw
+
+    learnedPath = currentPath + "/learned.txt"
+    f = myComp.File(learnedPath)
+    if not f then
+        myComp.touch(currentPath, "learned.txt")
+        f = myComp.File(learnedPath)
+    end if
+    if not f then return
+
+    existing = f.get_content
+    if not existing or existing == null then existing = ""
+    if existing.split(char(10)).indexOf(pw) != null then return
+    f.set_content(existing + pw + char(10))
+end function
+
 CrackHash = function(hash)
     if not gco.hasIndex("rt") or gco.rt == null then buildRainbowTable
     if gco.rt.hasIndex(hash) then return gco.rt[hash]
-    if gco.crypto then return gco.crypto.decipher(hash)
+    if gco.crypto then
+        pw = gco.crypto.decipher(hash)
+        if pw then RtLearn(hash, pw)
+        return pw
+    end if
     return null
 end function
 
