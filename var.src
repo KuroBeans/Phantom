@@ -88,6 +88,7 @@ CmdClip = function(inp)
         end if
     end if
 end function
+CommandTable["clip"] = @CmdClip
 
 // ── inc ──────────────────────────────────────────────────────────
 CmdInc = function(inp)
@@ -110,6 +111,7 @@ CmdInc = function(inp)
         print(c.grey + "  @" + k + " = " + val + c.ennd)
     end if
 end function
+CommandTable["inc"] = @CmdInc
 
 // ── dec ──────────────────────────────────────────────────────────
 CmdDec = function(inp)
@@ -132,6 +134,7 @@ CmdDec = function(inp)
         print(c.grey + "  @" + k + " = " + val + c.ennd)
     end if
 end function
+CommandTable["dec"] = @CmdDec
 
 // ── math ─────────────────────────────────────────────────────────
 CmdMath = function(inp)
@@ -184,11 +187,29 @@ CmdMath = function(inp)
         end if
     end if
 end function
+CommandTable["math"] = @CmdMath
 
 // ── alias ────────────────────────────────────────────────────────
 CmdAlias = function(inp)
     gco = get_custom_object
     if not gco.hasIndex("aliases") then gco.aliases = {}
+    aliasFile = currentPath + "/aliases.txt"
+
+    saveAliases = function()
+        f = myComp.File(aliasFile)
+        if not f then myComp.touch(currentPath, "aliases.txt")
+        f = myComp.File(aliasFile)
+        if not f then
+            print(c.yellow + "<b>alias: could not write " + aliasFile + c.ennd)
+            return
+        end if
+        lines = []
+        for k in globals.aliases.indexes
+            lines.push(k + "=" + globals.aliases[k])
+        end for
+        f.set_content(lines.join(char(10)))
+    end function
+
     if inp.len == 1 then
         if aliases.len == 0 then
             print(c.grey + "no aliases defined" + c.ennd)
@@ -198,30 +219,37 @@ CmdAlias = function(inp)
                 print(c.gold + "  " + k + c.ennd + c.grey + " = " + c.ennd + c.white + aliases[k] + c.ennd)
             end for
         end if
+
     else if inp[1] == "-d" then
         if inp.len < 3 then
             print(c.yellow + "<b>usage: alias -d <name>" + c.ennd)
         else
             k = inp[2]
             if aliases.hasIndex(k) then
-                aliases.remove(k)
+                globals.aliases.remove(k)
                 gco.aliases.remove(k)
+                saveAliases()
                 print(c.grey + "  alias '" + k + "' removed" + c.ennd)
             else
                 print(c.yellow + "  alias '" + k + "' not found" + c.ennd)
             end if
         end if
+
     else if inp.len < 3 then
         print(c.yellow + "<b>usage: alias <name> <command...>" + c.ennd)
         print(c.grey + "  e.g.  alias gs grab @t 80 -push" + c.ennd)
+        print(c.grey + "  alias -d <name>  to remove" + c.ennd)
+
     else
         k = inp[1]
         val = inp[2:].join(" ")
         globals.aliases[k] = val
         gco.aliases[k] = val
+        saveAliases()
         print(c.lime + "  alias '" + k + "' = " + val + c.ennd)
     end if
 end function
+CommandTable["alias"] = @CmdAlias
 
 // ── ask ──────────────────────────────────────────────────────────
 CmdAsk = function(inp)
@@ -245,6 +273,7 @@ CmdAsk = function(inp)
         end if
     end if
 end function
+CommandTable["ask"] = @CmdAsk
 
 // ── echo ─────────────────────────────────────────────────────────
 CmdEcho = function(inp)
@@ -254,6 +283,7 @@ CmdEcho = function(inp)
         print(c.white + inp[1:].join(" ") + c.ennd)
     end if
 end function
+CommandTable["echo"] = @CmdEcho
 
 // ── log ──────────────────────────────────────────────────────────
 CmdLog = function(inp)
@@ -283,3 +313,4 @@ CmdLog = function(inp)
         end if
     end if
 end function
+CommandTable["log"] = @CmdLog
