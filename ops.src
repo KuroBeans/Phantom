@@ -1481,7 +1481,15 @@ end function
 // -- Cascade -------------------------------------------------------
 // Runs wstack from every shell on the stack, sweeping the LAN behind
 // each one and capturing all discovered boxes in one pass.
-Cascade = function()
+// cascade [opt:libname] — sweeps every shell on the stack via WStack.
+// No libname: WStack falls to wsx.src's hardcoded init.so/libhttp.so
+// guess for every router regardless of what's actually running there.
+// With a libname, wsx.src instead checks db.txt-known mem/val pairs for
+// THAT lib+version first (KnownPairsFor, same shortcut scanlan/scanlib/
+// grab already get) before falling back to a full scan — so a lib
+// you've already exploited elsewhere skips straight to known-good
+// candidates on every hop of the sweep instead of guessing blind.
+Cascade = function(libArg="")
     if objectStack.len == 0 then
         print(c.yellow + "<b>cascade: stack is empty" + c.ennd)
         return
@@ -1498,7 +1506,11 @@ Cascade = function()
         return
     end if
 
-    print(c.cyan + "<b>cascade: sweeping " + shells.len + " router(s)..." + c.ennd)
+    if libArg != "" then
+        print(c.cyan + "<b>cascade: sweeping " + shells.len + " router(s) with lib " + libArg + "..." + c.ennd)
+    else
+        print(c.cyan + "<b>cascade: sweeping " + shells.len + " router(s)..." + c.ennd)
+    end if
     div
 
     savedObject  = globals.object
@@ -1511,7 +1523,11 @@ Cascade = function()
         print(c.orange + "<b>[" + i + "/" + shells.len + "] " + rcomp.public_ip + "  lan:" + rcomp.local_ip + c.ennd)
         globals.object     = sh
         globals.remotePath = "/"
-        WStack([], false)
+        if libArg != "" then
+            WStack([libArg], false)
+        else
+            WStack([], false)
+        end if
         div
         i = i + 1
     end for
@@ -1988,6 +2004,11 @@ Scan = function(ip, port, comp, inject, libName)
     end if
     // check db.txt for known exploits for this lib - skip scanning if found
     dbFile = myComp.File(currentPath + "/db.txt")
+	if not dbFile then
+		myComp.touch(currentPath + "db.txt")
+		dbFile = myComp.File(currentPath + "/db.txt")
+	end if
+	
     if dbFile and typeof(dbFile) == "file" then
         content = dbFile.get_content
         if content and content != "" then
