@@ -32,7 +32,9 @@ end function
 CommandTable["wstack"] = @CmdWstack
 
 CmdCascade = function(inp)
-    Cascade()
+    libArg = ""
+    if inp.len >= 2 then libArg = inp[1]
+    Cascade(libArg)
 end function
 CommandTable["cascade"] = @CmdCascade
 
@@ -749,6 +751,15 @@ Exploit = function(ip, port, acceptComputer)
     end for
 
     dbFile = myComp.File(currentPath + "/db.txt")
+	if not dbFile then
+		myComp.touch(currentPath, "db.txt")
+		dbFile = myComp.File(currentPath + "/db.txt")
+		else
+		if dbFile == null or not dbFile then
+		print(char(9) + char(10) + "<color=red><size=125%>Missing db.txt, make it in /root/ai/tp and then try again")
+		return
+end if
+end if
     if dbFile and typeof(dbFile) == "file" then
         dbContent = dbFile.get_content
         if dbContent and dbContent != "" then
