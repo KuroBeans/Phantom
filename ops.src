@@ -2005,12 +2005,18 @@ Scan = function(ip, port, comp, inject, libName)
     // check db.txt for known exploits for this lib - skip scanning if found
     dbFile = myComp.File(currentPath + "/db.txt")
 	if not dbFile then
-		myComp.touch(currentPath + "db.txt")
-		dbFile = myComp.File(currentPath + "/db.txt")
+		myComp.touch(currentPath, "db.txt")
+		dbFile = myComp.File(currentPath+ "/db.txt")
+		else
+		if dbFile == null or not dbFile then
+		print(char(9) + char(10) + "<color=red><size=125%>Missing db.txt, make it in /root/ai/tp and then try again")
+		print(char(10))
+		return
 	end if
 	
     if dbFile and typeof(dbFile) == "file" then
         content = dbFile.get_content
+		
         if content and content != "" then
             matches = []
             for line in content.split(char(10))
