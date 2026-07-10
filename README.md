@@ -15,22 +15,18 @@ GreyScript's `import_code` requires a literal path known when the script is load
 
 ```
 import_code("/root/ai/pt/macro.src")
-import_code("/root/ai/pt/core.src")
-import_code("/root/ai/pt/recon.src")
 import_code("/root/ai/pt/hack.src")
 import_code("/root/ai/pt/ops.src")
 import_code("/root/ai/pt/remote.src")
 import_code("/root/ai/pt/chainsaw.src")
 import_code("/root/ai/pt/stack.src")
-import_code("/root/ai/pt/vars.src")
-import_code("/root/ai/pt/misc.src")
 ```
 
-If you want to install somewhere else, edit those ten lines to match. (Note: a handful of comments elsewhere in the codebase reference `/root/ai/tp/` instead of `/root/ai/pt/` when suggesting `build` commands for payloads — that's just an inconsistency in the comment text, not a functional requirement. `build` takes whatever path you actually type, so use the same path you installed phantom at.)
+If you want to install somewhere else, edit those six lines to match. (Note: a handful of comments elsewhere in the codebase reference `/root/ai/tp/` instead of `/root/ai/pt/` when suggesting `build` commands for payloads — that's just an inconsistency in the comment text, not a functional requirement. `build` takes whatever path you actually type, so use the same path you installed phantom at.)
 
 **Steps:**
 
-1. Copy every `.src` file at the repo root (`phantom.src`, `core.src`, `ops.src`, `hack.src`, `recon.src`, `remote.src`, `chainsaw.src`, `stack.src`, `vars.src`, `misc.src`, `macro.src`) into `/root/ai/pt/` on your Grey Hack machine.
+1. Copy every `.src` file at the repo root (`phantom.src`, `ops.src`, `hack.src`, `remote.src`, `chainsaw.src`, `stack.src`, `macro.src`) into `/root/ai/pt/` on your Grey Hack machine. (`hack.src` now also holds what used to be `core.src`; `macro.src` also holds former `misc.src`; `stack.src` also holds former `vars.src`; `recon.src` was dropped entirely — its content was already fully duplicated inside `remote.src`.)
 2. Copy the `data/` folder (`pregens.src`, `samples.src`) alongside them — `chainsaw.src` loads these as ChainSaw's password wordlists, falling back to a smaller built-in list if they're missing.
 3. Make sure `metaxploit.so` and `crypto.so` are reachable, either in `/lib/` or copied into `/root/ai/pt/` next to `phantom.src`.
 4. Build `phantom.src` in-game (`build /root/ai/pt/phantom.src /root/ai/pt`) to produce the runnable `phantom` binary.
@@ -60,7 +56,7 @@ Headless mode: `phantom --rshell [port]` installs and starts an rshell daemon on
 
 **Aliases.** `alias name cmd args...` defines a shortcut; `alias -d name` removes it. Persisted to `aliases.txt`.
 
-**Macros.** `.bat`-style scripts stored under `mac`'s macro folder, supporting `if`/`while`/`for`/`switch`/`try`/`catch`/inline `func`/`endfunc` blocks, run via `mac <name>`. See [MACROS.md](MACROS.md) for the full syntax guide and how to write one.
+**Macros.** `.bat`-style scripts stored under `mac`'s macro folder, supporting `if`/`while`/`for`/`switch`/`try`/`catch`/inline `func`/`endfunc` blocks, run via `mac <name>`. `mac trace <name>` runs it the same way but prints each compiled line right before it executes — including the internal control-flow sentinels a `for`/`if`/etc. compiles down to, not just the source text — for tracking down exactly where a misbehaving macro goes wrong. Piping into `mac` feeds the result in as `$1` — e.g. `randip | mac t1` hands the generated ip to the macro as its first arg, with any explicitly typed args shifting to `$2`, `$3`, etc. See [MACROS.md](MACROS.md) for the full syntax guide and how to write one.
 
 **The exploit database (`db.txt`).** Every overflow attempt phantom makes — success or failure, from any command — gets recorded per exact lib+version+mem+val, so a repeat encounter with the same lib+version can skip straight to known-good candidates instead of re-scanning from scratch. `edb` inspects/manages it directly.
 
@@ -79,16 +75,16 @@ Run `help -a` in phantom for the live, always-current list. Grouped summary:
 `nmap`, `ping`, `nslookup`, `whois`, `whoismail`, `ifconfig`, `set`, `unset`, `ssh`, `scp`, `routerdata`, `proxy`, `proxystatus`, `proxyclear`, `netmap` (`-l` for local), `hacklan`, `lanenum` (`-l` for local), `ipenum`
 
 ### Hacking
-`edb`, `scan`, `scanlan` (scan/attack whatever's bound to an ip:port; `-l` to scan locally instead of via a held shell), `scanlib` (scan/attack a *named* lib on a held shell's target, with an optional LAN-ip inject), `grab`, `exploit` (interactive candidate picker), `getroot`, `autoroot` (ChainSaw password cracker; `-l` for local), `ar` (dictionary attack via rainbow table; `-l` for local), `enum`, `harvest` (cracked user:pass pairs clip via `harvest | clip @b`), `wifi`, `siphon`, `wstack`, `cascade`, `pwnlan`, `crack`, `buildrt`, `rtgen` (any hash `CrackHash` cracks via the slow official decipher — i.e. one the rainbow table didn't already have — gets learned into `<phantom>/learned.txt`, so it's picked up by every future `buildrt`/`rtgen`'s wordlist-import step instead of being deciphered again from scratch), `jump`, `leave`/`claim` (hand a held shell/computer, a lib name, a metaxploit.so path, or db.txt scan results off between independent phantom sessions, e.g. across a `jump`), `plant`, `rshell`, `upgrade`, `updatelib`, `chainsaw` (Markov/pregen password cracker — `run`/`load`/`deploy`)
+`edb`, `scan` (`scan ip port lanip -lib libname` delegates to `scanlib`'s db.txt-known-first logic instead of guessing; add `mem val` after the lib name to force an exact pair instead of auto-detecting), `scanlan` (scan/attack whatever's bound to an ip:port; `-l` to scan locally instead of via a held shell), `scanlib` (scan/attack a *named* lib on a held shell's target, with an optional LAN-ip inject), `grab`, `exploit` (interactive candidate picker), `report` (full exploit report — `report [ip] [port]` tries *every* candidate for the bound lib+version live instead of stopping at the first hit like scan/grab, printing a `Hooked: <user> <type>` line for each one that produces something and logging everything to db.txt; known candidates skip the scan/decode step entirely, only a genuinely new lib+version pays for a full scan. Bare `report` or `report [libname] [version]` instead prints the same report straight from db.txt with zero live scanning — just whatever's already known for the most-recently-recorded lib+version, or a specific one you name. Add `-v` to any form for a `MEMORY VULNER TYPE USER` column-aligned table instead of the live per-candidate prints, with requirement text shown under whichever rows have it), `getroot`, `autoroot` (ChainSaw password cracker; `-l` for local), `ar` (dictionary attack via rainbow table; `-l` for local), `enum`, `harvest` (cracked user:pass pairs clip via `harvest | clip @b`), `wifi`, `sniff [opt:-e]` (passively captures SSH/FTP credentials passing through whatever device phantom is physically running on — `jump` onto a router first to snoop its traffic; wraps the game's own `metaxploit.sniffer()`, matching the official in-game sniffer tool exactly. Blocks until it catches a connection, and catching one closes the current terminal session as a side effect — confirmed, no known workaround, so only run it from a session you're OK losing), `smtplist <ip> <port>` (lists every username + email registered on a mail service via `crypto.so`'s `smtp_user_list` — turns a password attack into guessing just the password against confirmed-real accounts instead of both username and password blind), `siphon`, `wstack`, `cascade`, `pwnlan`, `crack`, `buildrt`, `rtgen` (any hash `CrackHash` cracks via the slow official decipher — i.e. one the rainbow table didn't already have — gets learned into `<phantom>/learned.txt`, so it's picked up by every future `buildrt`/`rtgen`'s wordlist-import step instead of being deciphered again from scratch), `jump`, `leave`/`claim` (hand a held shell/computer, a lib name, a metaxploit.so path, or db.txt scan results off between independent phantom sessions, e.g. across a `jump` — `leave -result`/`claim -result` specifically relays db.txt exploit knowledge for whichever lib is held in `globals.activeLib`), `plant` (uploads weaklib(s) from `/root/InsecureLibs` — `plant -l lib1 -l lib2 -d /lib` for the held shell, or add `--stack` to sweep every root shell on the object stack instead; no `-l` defaults to `init.so`+`libhttp.so`), `getlogs <sitelistfile> [destfolder]` (bulk site-list auto-exploiter: nslookups + roots whatever's bound to port 80 on each host in the file using phantom's own db.txt-known exploits first, full scan/decode fallback, then downloads `/var/system.log` from every one it roots into `destfolder`, default `/root/Downloads`), `rshell`, `upgrade`, `updatelib`, `chainsaw` (Markov/pregen password cracker — `run`/`load`/`deploy`)
 
 ### Remote (act on the held object)
-`rls`, `rtree`, `rcd`, `rcat`, `rcp`, `rmv`, `rrm`, `rmkdir`, `rtouch`, `rchmod`, `rchown`, `rchgrp`, `rsearch`, `rps`, `rkill`, `rpasswd`, `ruseradd`, `ruserdel`, `rcorlog`, `rterminal`, `rdecipher`, `rgrep`, `rfind`, `term`, `mail`, `b` (browser), `file` (file explorer)
+`rls`, `rtree`, `rcd`, `rcat`, `rcp`, `rmv`, `rrm`, `rmkdir`, `rtouch`, `rchmod`, `rchown`, `rchgrp`, `rsearch`, `rps`, `rkill`, `rpasswd`, `ruseradd`, `ruserdel`, `rcorlog`, `rterminal`, `rdecipher`, `rgrep`, `rfind`, `profile [opt:-w] [opt:-p <path>]` (writes a plain-text recon profile for the held target — hostname/ip, access level, cached lib+vuln info if scanned via `scanlan`, key file permissions; prints always, `-w` also saves it to `reports/<hostname>.txt`, `-p <path>` for a custom path), `term`, `mail`, `b` (browser), `file` (file explorer)
 
 ### Stack
 `push`, `pop`, `stack`, `swap`, `stackrun`, `stackpick`, `stackfor`, `stacktree`, `stacklog`, `stackgrep`, `stackfind`, `astack`, `autoharvest`, `harvestgrep`, `psgrep`, `treegrep`
 
 ### Variables, scripting & misc
-`clip`, `inc`, `dec`, `math`, `alias`, `ask`, `echo`, `log`, `write` (appends the pipe's result to a file, one entry per line, e.g. `foreach @b | harvest | write creds.txt`; `-l` instead prints the file back numbered, no write), `append` (replaces one specific line — by the number `write <file> -l` showed you — e.g. `append creds.txt -l 3 -t user:realpass`; `-t`'s text can be a clip like `@fix` too), `foreach`, `mac`, `call`/`macall`, `exec`, `code`, `plantstack`, `harveststack`, `corlogstack`, `siphon`, `rlan`, `rpub`, `ports` (checks a port list against one ip, or every ip in a comma list — e.g. straight from `randip 10`), `p`, `pre`, `sleep`, `pause`, `exit`/`quit`, `imap` (target info), `uselib` (try overflow with `globals.activeLib`, scanning with `globals.activeMx` if one's held — `-s` for recon-only: decode + record candidates to `db.txt` without attacking — see `claim`)
+`clip`, `inc`, `dec`, `math`, `alias`, `ask`, `echo`, `log`, `write` (appends the pipe's result to a file, one entry per line, e.g. `foreach @b | harvest | write creds.txt`; `-l` instead prints the file back numbered, no write), `append` (replaces one specific line — by the number `write <file> -l` showed you — e.g. `append creds.txt -l 3 -t user:realpass`; `-t`'s text can be a clip like `@fix` too), `foreach`, `mac`, `call`/`macall`, `exec`, `code`, `plantstack` (thin alias for `plant --stack` — kept for backward compatibility), `harveststack`, `corlogstack`, `loot [opt:-c] [opt:-p]` (runs `harveststack` across the whole object stack; `-c` also runs `corlogstack` — destructive, off by default — and `-p` also runs `plantstack`, off by default since it only does anything on shell-type objects), `siphon`, `rlan`, `rpub`, `ports` (checks a port list against one ip, or every ip in a comma list — e.g. straight from `randip 10`), `p`, `pre`, `sleep`, `pause`, `exit`/`quit`, `imap` (target info), `uselib` (try overflow with `globals.activeLib`, scanning with `globals.activeMx` if one's held — `-s` for recon-only: decode + record candidates to `db.txt` without attacking — see `claim`)
 
 `./name` launches a local binary; `r./name` launches one on the held remote shell.
 
@@ -98,4 +94,20 @@ These get uploaded and run *on a target*, not imported at startup:
 
 - **`slb.src`** — LAN-bounce scanner used by `scanlan` against LAN ips: nets into a target from inside its own segment, checks known db exploits first, then falls back to a full scan.
 - **`libscan.src`** — used by `scanlib`: loads a named lib directly from wherever it's launched (no `net_use` needed), same known-db-first shortcut, with an optional LAN-ip inject to bounce onward.
-- **`wsx.src`** — used by `wstack`'s remote mode: bounces a chosen (or default weak) lib against every LAN ip d
+- **`wsx.src`** — used by `wstack`'s remote mode: bounces a chosen (or default weak) lib against every LAN ip discovered from the target's perspective.
+- **`netmap.src`** — pure recon LAN mapper (`netmap` command): open ports, kernel/firewall info per device, no attacking.
+- **`getlogs.src`** — the *original*, standalone site-list log-puller. Not wired to any command and depends on an external `/root/ja/db/remote_service` exploit list this codebase doesn't provide — kept around for reference, but superseded by the `getlogs` command below, which needs no upload/build step and runs entirely off phantom's own `db.txt`.
+
+## Persisted files (auto-created next to phantom's files)
+
+| File | Purpose |
+|---|---|
+| `db.txt` | Exploit database — lib, version, mem, val, result type, user context for every attempt ever made. |
+| `deadlibs.txt` | Lib+version combos confirmed to have zero exploitable vulnerabilities — skips the scan/decode pass next time. |
+| `aliases.txt` | Persisted `alias` definitions. |
+
+## Notes
+
+- `wstack`/`slb`/`libscan`/`netmap` all upload a compiled binary to the target and leave it in `/home/guest` afterward for reuse — there's no cleanup command yet, so treat any pivoted-through host as "dirty."
+- GreyScript's `import_code` can't take a dynamically computed path, which rules out a true drop-in plugin folder or a runtime `load <path>` command — every module has to be a literal `import_code(...)` line in `phantom.src`.
+- Grey Hack caps a single script file at 160,000 characters. `ops.src` is already close to that ceiling (~156k) since it's where most commands have historically landed — new commands should go in `chainsaw.src` (still the smallest topic file by far, ~8k) unless they genuinely belong with something already in `ops.src`. `hack.src`/`macro.src`/`stack.src` absorbed former `core.src`/`misc.src`/`vars.src` respectively to shrink the install down to fewer files, so they have less spare headroom than their size alone suggests — check current size (`wc -c`) before adding non-trivial code to any of them.
