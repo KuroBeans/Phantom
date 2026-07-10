@@ -880,3 +880,478 @@ CmdTreegrep = function(inp)
     end if
 end function
 CommandTable["treegrep"] = @CmdTreegrep
+
+
+
+
+// ================================================================
+//  vars.src  |  phantom module  |  variables, clips, aliases
+// ================================================================
+
+// ── clip ─────────────────────────────────────────────────────────
+CmdClip = function(inp)
+    gco = get_custom_object
+    if not gco.hasIndex("clips") then gco.clips = {}
+    if inp.len == 1 then
+        if gco.clips.len == 0 then
+            print(c.grey + "no clips stored" + c.ennd)
+        else
+            for k in gco.clips.indexes
+                print(c.gold + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + gco.clips[k] + c.ennd)
+            end for
+        end if
+    else if inp[1] == "-d" or inp[1] == "-c" then
+        if inp.len < 3 then
+            if inp[1] == "-c" then
+                count = gco.clips.len
+                gco.clips = {}
+                for k in pipeVars.indexes
+                    pipeVars.remove(k)
+                end for
+                print(c.grey + "  cleared " + count + " clip(s)" + c.ennd)
+            else
+                print(c.yellow + "<b>clip -d: missing name (e.g. clip -d @a)" + c.ennd)
+            end if
+        else
+            k = inp[2]
+            if k[0:1] == "@" then k = k[1:]
+            if gco.clips.hasIndex(k) then
+                gco.clips.remove(k)
+                if pipeVars.hasIndex(k) then pipeVars.remove(k)
+                print(c.grey + "  cleared @" + k + c.ennd)
+            else
+                print(c.yellow + "  @" + k + " not found" + c.ennd)
+            end if
+        end if
+    else
+        k = inp[1]
+        if k[0:1] == "@" then k = k[1:]
+
+        // Remove any comma-separated values that snuck into k (from variable substitution)
+        if k.indexOf(",") != null then
+            k = k.split(",")[0]
+        end if
+
+        // A pending object-list result (e.g. from "stack | clip @b")
+        // takes priority over the normal string path — objects can't be
+        // joined into gco.clips' plain-string values, so they get their
+        // own store (gco.objClips) that foreach/for @x in @b know to
+        // check. Only applies to the bare "clip @name" capture form,
+        // same as the string pipeResult path below it.
+        if inp.len < 3 and globals.pipeObjResult != null and globals.pipeObjResult.len > 0 then
+            gcoO = get_custom_object
+            if not gcoO.hasIndex("objClips") then gcoO.objClips = {}
+            gcoO.objClips[k] = globals.pipeObjResult
+            globals.pipeObjResult = null
+            print(c.lime + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + gcoO.objClips[k].len + " object(s)" + c.ennd)
+            return
+        end if
+
+        // Check for += (accumulation mode)
+        if inp.len >= 3 and inp[2] == "+=" then
+            val = inp[3:].join(" ")
+            if val == "" or val == "+=" then val = pipeResult
+
+            if gco.clips.hasIndex(k) and gco.clips[k] != "" then
+                existing = gco.clips[k]
+                items = existing.split(",")
+                if items.indexOf(val) == null then
+                    val = existing + "," + val
+                else
+                    val = existing
+                end if
+            end if
+            gco.clips[k] = val
+            pipeVars[k] = val
+            globals.pipeResult = val
+            print(c.lime + "  @" + k + " += " + val + c.ennd)
+        else if inp.len < 3 then
+            if pipeResult != "" then
+                val = pipeResult
+                gco.clips[k] = val
+                pipeVars[k] = val
+                // leave pipeResult as-is (don't clear it) — lets clip act as
+                // a tee, e.g. "harvest | clip @a | write file" both saves the
+                // named clip AND still hands the same result on to write
+                print(c.lime + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + val + c.ennd)
+            else if gco.clips.hasIndex(k) then
+                print(c.gold + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + gco.clips[k] + c.ennd)
+            else
+                print(c.yellow + "  @" + k + " not set  (usage: clip @" + k + " <value>)" + c.ennd)
+            end if
+        else
+            val = inp[2:].join(" ")
+            if val == "stack" or val == "stack.len" then val = "" + objectStack.len
+            if gco.clips.hasIndex(k) and gco.clips[k] != "" then
+                val = gco.clips[k] + "," + val
+            end if
+            gco.clips[k] = val
+            pipeVars[k] = val
+            print(c.lime + "  @" + k + c.ennd + c.grey + " = " + c.ennd + c.white + val + c.ennd)
+        end if
+    end if
+end function
+CommandTable["clip"] = @CmdClip
+
+// ── inc ──────────────────────────────────────────────────────────
+CmdInc = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: inc @var [amount]")
+    else
+        k = inp[1]
+        if k[0:1] == "@" then k = k[1:]
+        amount = 1
+        if inp.len >= 3 then amount = inp[2].to_int
+        gco = get_custom_object
+        if not gco.hasIndex("clips") then gco.clips = {}
+        cur = 0
+        if gco.clips.hasIndex(k) and gco.clips[k] != "" then cur = gco.clips[k].to_int
+        cur = cur + amount
+        val = "" + cur
+        gco.clips[k] = val
+        pipeVars[k] = val
+        globals.pipeResult = val
+        print(c.grey + "  @" + k + " = " + val + c.ennd)
+    end if
+end function
+CommandTable["inc"] = @CmdInc
+
+// ── dec ──────────────────────────────────────────────────────────
+CmdDec = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: dec @var [amount]")
+    else
+        k = inp[1]
+        if k[0:1] == "@" then k = k[1:]
+        amount = 1
+        if inp.len >= 3 then amount = inp[2].to_int
+        gco = get_custom_object
+        if not gco.hasIndex("clips") then gco.clips = {}
+        cur = 0
+        if gco.clips.hasIndex(k) and gco.clips[k] != "" then cur = gco.clips[k].to_int
+        cur = cur - amount
+        val = "" + cur
+        gco.clips[k] = val
+        pipeVars[k] = val
+        globals.pipeResult = val
+        print(c.grey + "  @" + k + " = " + val + c.ennd)
+    end if
+end function
+CommandTable["dec"] = @CmdDec
+
+// ── math ─────────────────────────────────────────────────────────
+CmdMath = function(inp)
+    if inp.len < 5 then
+        print("<b>Usage: math @result @a +|-|*|/ @b")
+        print(c.grey + "  e.g.  math @result @count + 1" + c.ennd)
+        print(c.grey + "  e.g.  math @remaining @goal - @found" + c.ennd)
+    else
+        k = inp[1]
+        if k[0:1] == "@" then k = k[1:]
+        leftTok2 = inp[2]
+        if leftTok2[0:1] == "@" then
+            vn2 = leftTok2[1:]
+            if pipeVars.hasIndex(vn2) then leftTok2 = pipeVars[vn2]
+        end if
+        op2 = inp[3]
+        rightTok2 = inp[4]
+        if rightTok2[0:1] == "@" then
+            vn2 = rightTok2[1:]
+            if pipeVars.hasIndex(vn2) then rightTok2 = pipeVars[vn2]
+        end if
+        lv2 = leftTok2.to_int
+        rv2 = rightTok2.to_int
+        result2 = 0
+        if op2 == "+" then
+            result2 = lv2 + rv2
+        else if op2 == "-" then
+            result2 = lv2 - rv2
+        else if op2 == "*" then
+            result2 = lv2 * rv2
+        else if op2 == "/" then
+            if rv2 == 0 then
+                print(c.yellow + "<b>math: division by zero" + c.ennd)
+                globals.pipeFailed = true
+            else
+                result2 = floor(lv2 / rv2)
+            end if
+        else
+            print(c.yellow + "<b>math: unknown operator '" + op2 + "' — use + - * /" + c.ennd)
+            globals.pipeFailed = true
+        end if
+        if not pipeFailed then
+            val2 = "" + result2
+            gco = get_custom_object
+            if not gco.hasIndex("clips") then gco.clips = {}
+            gco.clips[k] = val2
+            pipeVars[k] = val2
+            globals.pipeResult = val2
+            print(c.grey + "  @" + k + " = " + val2 + c.ennd)
+        end if
+    end if
+end function
+CommandTable["math"] = @CmdMath
+
+// ── alias ────────────────────────────────────────────────────────
+CmdAlias = function(inp)
+    gco = get_custom_object
+    if not gco.hasIndex("aliases") then gco.aliases = {}
+    aliasFile = currentPath + "/aliases.txt"
+
+    saveAliases = function()
+        f = myComp.File(aliasFile)
+        if not f then myComp.touch(currentPath, "aliases.txt")
+        f = myComp.File(aliasFile)
+        if not f then
+            print(c.yellow + "<b>alias: could not write " + aliasFile + c.ennd)
+            return
+        end if
+        lines = []
+        for k in globals.aliases.indexes
+            lines.push(k + "=" + globals.aliases[k])
+        end for
+        f.set_content(lines.join(char(10)))
+    end function
+
+    if inp.len == 1 then
+        if aliases.len == 0 then
+            print(c.grey + "no aliases defined" + c.ennd)
+        else
+            print(c.cyan + "<b>aliases:" + c.ennd)
+            for k in aliases.indexes
+                print(c.gold + "  " + k + c.ennd + c.grey + " = " + c.ennd + c.white + aliases[k] + c.ennd)
+            end for
+        end if
+
+    else if inp[1] == "-d" then
+        if inp.len < 3 then
+            print(c.yellow + "<b>usage: alias -d <name>" + c.ennd)
+        else
+            k = inp[2]
+            if aliases.hasIndex(k) then
+                globals.aliases.remove(k)
+                gco.aliases.remove(k)
+                saveAliases()
+                print(c.grey + "  alias '" + k + "' removed" + c.ennd)
+            else
+                print(c.yellow + "  alias '" + k + "' not found" + c.ennd)
+            end if
+        end if
+
+    else if inp.len < 3 then
+        print(c.yellow + "<b>usage: alias <name> <command...>" + c.ennd)
+        print(c.grey + "  e.g.  alias gs grab @t 80 -push" + c.ennd)
+        print(c.grey + "  alias -d <name>  to remove" + c.ennd)
+
+    else
+        k = inp[1]
+        val = inp[2:].join(" ")
+        globals.aliases[k] = val
+        gco.aliases[k] = val
+        saveAliases()
+        print(c.lime + "  alias '" + k + "' = " + val + c.ennd)
+    end if
+end function
+CommandTable["alias"] = @CmdAlias
+
+// ── ask ──────────────────────────────────────────────────────────
+CmdAsk = function(inp)
+    if inp.len < 2 then
+        print(c.yellow + "<b>usage: ask @var [prompt]" + c.ennd)
+    else
+        k = inp[1]
+        if k[0:1] == "@" then k = k[1:]
+        prompt = ""
+        if inp.len >= 3 then prompt = inp[2:].join(" ")
+        val = user_input(c.gold + prompt + c.ennd, false, false)
+        if val != "" then
+            gco = get_custom_object
+            if not gco.hasIndex("clips") then gco.clips = {}
+            gco.clips[k] = val
+            pipeVars[k] = val
+            globals.pipeResult = val
+            print(c.lime + "  @" + k + " = " + val + c.ennd)
+        else
+            print(c.grey + "  @" + k + " unchanged (empty input)" + c.ennd)
+        end if
+    end if
+end function
+CommandTable["ask"] = @CmdAsk
+
+// ── echo ─────────────────────────────────────────────────────────
+CmdEcho = function(inp)
+    if inp.len == 1 then
+        print("")
+    else
+        print(c.white + inp[1:].join(" ") + c.ennd)
+    end if
+end function
+CommandTable["echo"] = @CmdEcho
+
+// ── log ──────────────────────────────────────────────────────────
+CmdLog = function(inp)
+    if inp.len < 3 then
+        print("<b>Usage: log <filepath> <message...>")
+        print(c.grey + "  e.g.  log /root/ai/creds.txt @a:@port" + c.ennd)
+    else
+        logPath = inp[1]
+        msg = inp[2:].join(" ")
+        parts2 = logPath.split("/")
+        fileName = parts2[-1]
+        folder = logPath[:logPath.len - fileName.len - 1]
+        if folder == "" then folder = "/"
+        logFile = myComp.File(logPath)
+        if not logFile then
+            myComp.touch(folder, fileName)
+            logFile = myComp.File(logPath)
+        end if
+        if not logFile then
+            print(c.yellow + "<b>log: could not create " + logPath + c.ennd)
+            globals.pipeFailed = true
+        else
+            existing = logFile.get_content
+            if not existing or existing == null then existing = ""
+            logFile.set_content(existing + msg + char(10))
+            print(c.grey + "  logged: " + msg + c.ennd)
+        end if
+    end if
+end function
+CommandTable["log"] = @CmdLog
+
+// ── write ────────────────────────────────────────────────────────
+// Appends whatever the pipe just produced to a file, one entry per
+// line — e.g. "stack | clip @b | foreach @b | harvest | write creds.txt"
+// logs every cracked user:pass across the whole object list as it's
+// found. Deliberately splits pipeResult on "," instead of writing it
+// as one joined line: harvest/ports/etc. all comma-join multiple
+// results into pipeResult for @clip purposes, but a written log should
+// read as one finding per line, not one giant CSV row.
+// write <file> -r instead reads the file back and prints it with line
+// numbers (no write) — meant as a lookup step before a future flag
+// that edits/replaces one specific line.
+// Path resolution matches touch: an absolute path (leading "/") is
+// used as-is, a bare name like "creds.txt" resolves against the
+// current local dir (myPath) via the same GetFile/Touch helpers touch
+// itself uses — no separate ad-hoc folder-splitting here.
+CmdWrite = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: write <file> [-l]")
+        print(c.grey + "  e.g.  harvest | write creds.txt        (saves in the current dir, like touch)" + c.ennd)
+        print(c.grey + "  e.g.  harvest | write /root/ai/creds.txt" + c.ennd)
+        print(c.grey + "  e.g.  write creds.txt -l   (print file, numbered — see append)" + c.ennd)
+        return
+    end if
+
+    filePath = inp[1]
+    f = GetFile(filePath, myComp, true)
+    if not f then
+        Touch(filePath, myComp, true)
+        f = GetFile(filePath, myComp, true)
+    end if
+    if not f then
+        print(c.yellow + "<b>write: could not create " + filePath + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    if inp.len >= 3 and inp[2] == "-l" then
+        content = f.get_content
+        if not content or content == null then content = ""
+        lines = content.split(char(10))
+        // drop the trailing blank line from the final char(10) every write leaves
+        if lines.len > 0 and lines[-1] == "" then lines = lines[:-1]
+        print(c.cyan + "<b>" + filePath + "  (" + lines.len + " line(s))" + c.ennd)
+        i = 1
+        for ln in lines
+            print(c.gold + "  [" + i + "] " + c.ennd + c.white + ln + c.ennd)
+            i = i + 1
+        end for
+        return
+    end if
+
+    if pipeResult == "" then
+        print(c.yellow + "<b>write: nothing in the pipe to write" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    entries = pipeResult.split(",")
+    existing = f.get_content
+    if not existing or existing == null then existing = ""
+    out = existing
+    written = 0
+    for e in entries
+        if e == "" then continue
+        out = out + e + char(10)
+        written = written + 1
+    end for
+    f.set_content(out)
+    print(c.lime + "  wrote " + written + " line(s) to " + filePath + c.ennd)
+    globals.pipeResult = ""
+end function
+CommandTable["write"] = @CmdWrite
+
+// ── append ───────────────────────────────────────────────────────
+// Replaces one specific existing line in a file, by the line number
+// "write <file> -l" just showed you — e.g. harvest wrote a wrong
+// password on line 3, "append creds.txt -l 3 -t user:realpass" fixes
+// just that line in place. -t's text can be a clip too (e.g. -t @fix)
+// since the main loop already substitutes any @name with a value
+// pipeVars holds before this ever runs (see phantom.src's token
+// substitution) — nothing special to do for that here.
+CmdAppend = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: append <file> -l <line#> -t <text>")
+        print(c.grey + "  e.g.  append creds.txt -l 3 -t user:realpass" + c.ennd)
+        print(c.grey + "  e.g.  append creds.txt -l 3 -t @fix   (replace with a clip's value)" + c.ennd)
+        return
+    end if
+
+    filePath = inp[1]
+    lineNum  = null
+    text     = null
+
+    i = 2
+    while i < inp.len
+        if inp[i] == "-l" and i + 1 < inp.len then
+            lineNum = inp[i+1].to_int
+            i = i + 2
+        else if inp[i] == "-t" and i + 1 < inp.len then
+            text = inp[i+1:].join(" ")
+            i = inp.len
+        else
+            i = i + 1
+        end if
+    end while
+
+    if lineNum == null or text == null then
+        print(c.yellow + "<b>append: need both -l <line#> and -t <text>" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    f = GetFile(filePath, myComp, true)
+    if not f then
+        print(c.yellow + "<b>append: file not found: " + filePath + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    content = f.get_content
+    if not content or content == null then content = ""
+    lines = content.split(char(10))
+    if lines.len > 0 and lines[-1] == "" then lines = lines[:-1]
+
+    if lineNum < 1 or lineNum > lines.len then
+        print(c.yellow + "<b>append: line " + lineNum + " out of range — file has " + lines.len + " line(s), see write " + filePath + " -l" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    lines[lineNum - 1] = text
+    f.set_content(lines.join(char(10)) + char(10))
+    print(c.lime + "  replaced line " + lineNum + " in " + filePath + c.ennd)
+end function
+CommandTable["append"] = @CmdAppend
+
+
