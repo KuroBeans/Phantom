@@ -574,3 +574,581 @@ ScanRemoteLib = function(ip, port, bounceIp, libName, mem, val)
         gco.slxObject = null
     end if
 end function
+
+// ── Profile ──────────────────────────────────────────────────────
+// Builds a plain-text recon profile for the currently held target
+// (object) — hostname/ip, access level, cached lib+vuln info if this
+// exact target was scanned via scanlan, and the same key-file
+// permission checks GETPERMS already does. Always prints; -w also
+// writes it to a file (default reports/<hostname>.txt, or -p <path>
+// for a custom one — passing -p implies -w even without it).
+// Named "profile" (not "report") to stay clear of hack.src's
+// exploit-report command, which claimed the "report" name.
+Profile = function(writeOut, customPath)
+    if typeof(object) != "shell" and typeof(object) != "computer" then
+        print(c.yellow + "<b>profile: not holding a remote shell/computer" + c.ennd)
+        return
+    end if
+    rhost = object
+    if typeof(object) == "shell" then rhost = object.host_computer
+
+    name = rhost.get_name
+    pub  = rhost.public_ip
+    lan  = rhost.local_ip
+    ctx  = GetUserCtx(object)
+
+    lines = []
+    lines.push("=== phantom recon profile ===")
+    lines.push("generated: " + current_date)
+    lines.push("")
+    lines.push("hostname:  " + name)
+    lines.push("public ip: " + pub)
+    lines.push("local ip:  " + lan)
+    lines.push("access:    " + ctx)
+
+    // cached scan info, if this exact target was hit via scanlan
+    if gco.hasIndex("scanLanResults") then
+        for key in gco.scanLanResults.indexes
+            if key.split(":")[0] == pub then
+                info = gco.scanLanResults[key]
+                lines.push("known lib: " + info["lib"] + " " + info["ver"] + "  (" + info["exploits"].len + " candidate(s) cached)")
+            end if
+        end for
+    end if
+
+    lines.push("")
+    lines.push("key file permissions:")
+    targets = ["/var/system.log", "/etc/passwd", "/home/guest", "/var", "/etc"]
+    for path in targets
+        f = rhost.File(path)
+        if not f then continue
+        r = "no"
+        w = "no"
+        if f.has_permission("r") then r = "yes"
+        if f.has_permission("w") then w = "yes"
+        lines.push("  " + path + "   r:" + r + "  w:" + w)
+    end for
+
+    print(char(10))
+    for ln in lines
+        print(c.cyan + ln + c.ennd)
+    end for
+
+    if writeOut then
+        destPath = customPath
+        if not destPath or destPath == "" then
+            if not myComp.File(currentPath + "/reports") then myComp.create_folder(currentPath, "reports")
+            destPath = currentPath + "/reports/" + name + ".txt"
+        end if
+        f2 = GetFile(destPath, myComp, true)
+        if not f2 then
+            Touch(destPath, myComp, true)
+            f2 = GetFile(destPath, myComp, true)
+        end if
+        if not f2 then
+            print(c.yellow + "<b>profile: could not write to " + destPath + c.ennd)
+            return
+        end if
+        f2.set_content(lines.join(char(10)))
+        print(c.grey + "  written to " + destPath + c.ennd)
+    end if
+end function
+
+// profile [opt:-w] [opt:-p <path>]  — -p implies -w even by itself
+CmdProfile = function(inp)
+    writeOut = inp.indexOf("-w") != null
+    customPath = null
+    pIdx = inp.indexOf("-p")
+    if pIdx != null and pIdx + 1 < inp.len then
+        customPath = inp[pIdx + 1]
+        writeOut = true
+    end if
+    Profile(writeOut, customPath)
+end function
+CommandTable["profile"] = @CmdProfile
+
+// ================================================================
+//  recon.src  |  reconnaissance & proxy
+// ================================================================
+
+// ── Cmd wrappers — each self-registers into CommandTable right after ─────
+// ── its own definition (see the CommandTable[...] line below it) ─────
+CmdProxy = function(inp)
+    if inp.len == 2 then
+        ProxyWithChainSaw(inp[1].to_int)
+    else
+        ProxyWithChainSaw(1)
+    end if
+    // autoroot the final hop automatically via ChainSaw
+    if gco.hasIndex("proxyReady") and gco.proxyReady then
+        gco.proxyReady = false
+        // ChainSaw attack already happened in ProxyWithChainSaw
+        if IsRoot(globals.object) then
+            print(char(10) + c.green + "<b>Proxy chain + ChainSaw complete — root shell ready" + c.ennd)
+        else
+            print(char(10) + c.yellow + "<b>Proxy chain complete — ChainSaw crack failed, guest shell only" + c.ennd)
+        end if
+    end if
+end function
+CommandTable["proxy"] = @CmdProxy
+
+CmdProxystatus = function(inp)
+    ProxyStatus
+end function
+CommandTable["proxystatus"] = @CmdProxystatus
+
+CmdProxyclear = function(inp)
+    ProxyClear
+end function
+CommandTable["proxyclear"] = @CmdProxyclear
+
+CmdNetmap = function(inp)
+    NetMap(inp.indexOf("-l") != null)
+end function
+CommandTable["netmap"] = @CmdNetmap
+
+CmdHacklan = function(inp)
+    if inp.len == 2 then
+        HackLan(inp[1])
+    else
+        print("<b>Usage: hacklan [lan-ip]")
+    end if
+end function
+CommandTable["hacklan"] = @CmdHacklan
+
+// ── NetMap ────────────────────────────────────────────────────
+// Deployed script (payloads/netmap.src) does the actual discovery
+// work from wherever it's uploaded and launched — the originating
+// script can't net_use LAN devices it isn't on the segment of. This
+// just handles upload/launch/cleanup (same shape as ScanLanBounce)
+// and reports on what gco.netmap* comes back with.
+//
+// Recon only, no attacking — matches how established toolkits keep
+// network-mapping fast (Plu70's who_scan/probe, Viper's nmap): pure
+// metadata, never net_use/scan/overflow. Use scanlan/grab on a
+// specific device from the results to actually attack it.
+NetMap = function(localMode=false)
+    if localMode then
+        // no upload/launch needed — if you jumped phantom itself onto
+        // this machine, it's already running here, so the exact same
+        // discovery payloads/netmap.src does on a remote target can
+        // just run in-process against myComp's own router instead
+        rcomp = myComp
+        pubIp = rcomp.public_ip
+        print(c.orange + "Mapping LAN locally..." + c.ennd)
+
+        router = get_router(pubIp)
+        if not router then router = get_router(rcomp.local_ip)
+        if not router then
+            print(c.yellow + "<b>netmap: could not reach own router" + c.ennd)
+            return
+        end if
+
+        kernelVer     = router.kernel_version
+        firewallRules = router.firewall_rules
+
+        deviceList = []
+        getDevicesLocal = function(r)
+            if r == null then return
+            ip = r.local_ip
+            if deviceList.indexOf(ip) == null then deviceList.push(ip)
+            devices = r.devices_lan_ip
+            if not devices then return
+            for device in devices
+                if device == ip then continue
+                if deviceList.indexOf(device) != null then continue
+                subRouter = get_router(device)
+                subSwitch = get_switch(device)
+                if subRouter then
+                    deviceList.push(device)
+                    getDevicesLocal(subRouter)
+                else if subSwitch then
+                    deviceList.push(device)
+                    getDevicesLocal(subSwitch)
+                else
+                    deviceList.push(device)
+                end if
+            end for
+        end function
+        getDevicesLocal(router)
+
+        // fill IP gaps — same as the remote payload
+        gapList = []
+        for existingIp in deviceList
+            parts = existingIp.split("\\.")
+            if parts.len < 4 then continue
+            subnet = parts[0] + "." + parts[1] + "." + parts[2] + "."
+            lastOctet = parts[3].to_int
+            i = 1
+            while i < lastOctet
+                candidate = subnet + i
+                if deviceList.indexOf(candidate) == null and gapList.indexOf(candidate) == null then
+                    gapList.push(candidate)
+                end if
+                i = i + 1
+            end while
+        end for
+        for gapIp in gapList
+            deviceList.push(gapIp)
+        end for
+
+        if deviceList.len == 0 then
+            print(c.yellow + "<b>netmap: no devices found" + c.ennd)
+            return
+        end if
+
+        netmapDevices = []
+        for lanIp in deviceList
+            entry = {}
+            entry.ip = lanIp
+            entry.ports = []
+            devRouter = get_router(lanIp)
+            if not devRouter then devRouter = router
+            ports = devRouter.device_ports(lanIp)
+            if typeof(ports) == "string" then
+                entry.firewalled = true
+                netmapDevices.push(entry)
+                continue
+            end if
+            entry.firewalled = false
+            if not ports or ports.len == 0 then
+                netmapDevices.push(entry)
+                continue
+            end if
+            for p in ports
+                pinfo = {}
+                pinfo.num = p.port_number
+                pinfo.state = "open"
+                if p.is_closed then pinfo.state = "closed"
+                pinfo.service = devRouter.port_info(p)
+                entry.ports.push(pinfo)
+            end for
+            netmapDevices.push(entry)
+        end for
+
+        print(char(10) + c.cyan + "<b>NETMAP  " + pubIp + c.ennd)
+        print(c.grey + "router kernel: " + kernelVer + c.ennd)
+        print(c.grey + "firewall rules: " + firewallRules + c.ennd)
+        print(c.grey + "devices found: " + netmapDevices.len + c.ennd)
+        print(c.grey + "----------------------------------------------------------------" + c.ennd)
+
+        for entry in netmapDevices
+            tag = ""
+            if entry.ip == rcomp.local_ip then tag = c.gold + "  ← current machine" + c.ennd
+            print(char(10) + c.gold + "<b>" + entry.ip + "</b>" + c.ennd + tag)
+            if entry.firewalled then
+                print(c.red + "  firewalled — device_ports returned no data" + c.ennd)
+                continue
+            end if
+            if entry.ports.len == 0 then
+                print(c.grey + "  no open ports" + c.ennd)
+                continue
+            end if
+            info = "  PORT STATE SERVICE VERSION"
+            for p in entry.ports
+                info = info + char(10) + "  " + p.num + " " + p.state + " " + p.service
+            end for
+            print(format_columns(info))
+        end for
+
+        print(char(10) + c.grey + "----------------------------------------------------------------" + c.ennd)
+        print(c.cyan + "netmap complete" + c.ennd)
+        print(c.grey + "  run scanlan/grab a target after" + c.ennd)
+        return
+    end if
+
+    if typeof(object) == "shell" then
+        rcomp = object.host_computer
+    else if typeof(object) == "computer" then
+        rcomp = object
+    else
+        print(c.yellow + "<b>netmap: not holding remote shell or computer" + c.ennd)
+        return
+    end if
+
+    nmBin = currentPath + "/netmap"
+    if not myComp.File(nmBin) then
+        print(c.yellow + "<b>netmap: netmap binary not found at " + nmBin + c.ennd)
+        print(c.grey + "  build it first: build /root/ai/tp/netmap.src /root/ai/tp" + c.ennd)
+        return
+    end if
+
+    mxf = rcomp.File("/home/guest/metaxploit.so")
+    if not mxf then myShell.scp(currentPath + "/metaxploit.so", "/home/guest", object)
+
+    print(c.orange + "Uploading netmap..." + c.ennd)
+    uploadResult = myShell.scp(nmBin, "/home/guest", object)
+    if typeof(uploadResult) == "string" and uploadResult != "" then
+        print(c.yellow + "<b>netmap: upload failed: " + uploadResult + c.ennd)
+        return
+    end if
+
+    bf = rcomp.File("/home/guest/netmap")
+    if not bf then
+        print(c.yellow + "<b>netmap: netmap not found on target after upload" + c.ennd)
+        return
+    end if
+
+    gco.netmapDevices  = []
+    gco.netmapDebug    = "script did not run"
+    gco.netmapKernel   = ""
+    gco.netmapFirewall = ""
+    gco.netmapPubIp    = ""
+    object.launch("/home/guest/netmap")
+    wait(4)
+
+    bf.delete
+    mxf2 = rcomp.File("/home/guest/metaxploit.so")
+    if mxf2 and not mxf then mxf2.delete
+
+    print(c.teal + "  debug: " + gco.netmapDebug + c.ennd)
+
+    if not gco.netmapDevices or gco.netmapDevices.len == 0 then
+        print(c.yellow + "<b>netmap: no devices found" + c.ennd)
+        return
+    end if
+
+    print(char(10) + c.cyan + "<b>NETMAP  " + gco.netmapPubIp + c.ennd)
+    print(c.grey + "router kernel: " + gco.netmapKernel + c.ennd)
+    print(c.grey + "firewall rules: " + gco.netmapFirewall + c.ennd)
+    print(c.grey + "devices found: " + gco.netmapDevices.len + c.ennd)
+    print(c.grey + "----------------------------------------------------------------" + c.ennd)
+
+    for entry in gco.netmapDevices
+        tag = ""
+        if entry.ip == rcomp.local_ip then tag = c.gold + "  ← current target" + c.ennd
+        print(char(10) + c.gold + "<b>" + entry.ip + "</b>" + c.ennd + tag)
+
+        if entry.firewalled then
+            print(c.red + "  firewalled — device_ports returned no data" + c.ennd)
+            continue
+        end if
+        if entry.ports.len == 0 then
+            print(c.grey + "  no open ports" + c.ennd)
+            continue
+        end if
+
+        info = "  PORT STATE SERVICE VERSION"
+        for p in entry.ports
+            info = info + char(10) + "  " + p.num + " " + p.state + " " + p.service
+        end for
+        print(format_columns(info))
+    end for
+
+    print(char(10) + c.grey + "----------------------------------------------------------------" + c.ennd)
+    print(c.cyan + "netmap complete" + c.ennd)
+    print(c.grey + "  run scanlan/grab on a specific ip:port to attack it" + c.ennd)
+end function
+
+// ── FindRouterPath ───────────────────────────────────────────────
+// IMPORTANT: devices_lan_ip is NOT limited to a router's immediate
+// neighbors — it's transitive, returning everything reachable
+// anywhere in that router's descendant tree (confirmed empirically:
+// root.devices_lan_ip contains targets that fail net_use directly
+// from root but succeed after manually pivoting closer first). That
+// means "targetIp appears in curRouter.devices_lan_ip" is true from
+// basically anywhere upstream of it and can't be used as a distance
+// signal — it'll say yes even from the very top of the tree.
+//
+// So instead of stopping at the first router whose list contains
+// targetIp (always the shallowest / root), this descends as deep as
+// possible: it only steps into a candidate child router if THAT
+// child's own devices_lan_ip still contains targetIp. The deepest
+// router for which that's still true is the one actually fronting
+// targetIp's real segment — going one step further would overshoot
+// past a router whose own list no longer sees it.
+//
+// Returns:
+//   []      — targetIp is already directly on rcomp's own LAN, no pivot needed
+//   [ip,...] — ordered router ips to pivot through, ending with the
+//              deepest router that still has targetIp in its own devices_lan_ip
+//   null    — targetIp isn't visible anywhere from rcomp at all
+// Switches are walked through but never counted as their own hop —
+// they extend a LAN rather than gating a new one the way a router
+// does, so a router reachable only via a switch still just adds one
+// hop, not two.
+FindRouterPath = function(rcomp, targetIp)
+    root = get_router(rcomp.public_ip)
+    if not root then root = get_router(rcomp.local_ip)
+    if not root then return null
+
+    // The old version trusted devices_lan_ip to be transitive at every
+    // single hop — only stepping into a child router if THAT child's
+    // own devices_lan_ip already listed targetIp directly. In practice
+    // that's not reliable: a target several hops deep can be genuinely
+    // absent from an intermediate router's own devices_lan_ip and only
+    // show up once you're closer, which made FindRouterPath falsely
+    // report "not found in the visible network" for real, reachable
+    // multi-hop targets (confirmed — netmap's unconditional recursive
+    // walk finds devices this never did). Building the full router/
+    // switch tree instead of trusting a one-shot lookup at each level
+    // is the only way to reliably find deeply-nested targets — same
+    // unconditional recursion netmap.src/wstack's getDevices already use.
+    visited = [root.local_ip]
+    queue = [[root, []]]  // [router-or-switch, router-hops-taken-to-reach-it]
+
+    while queue.len > 0
+        entry   = queue.pull
+        curNode = entry[0]
+        curPath = entry[1]
+
+        devices = curNode.devices_lan_ip
+        if not devices then continue
+
+        if devices.indexOf(targetIp) != null then return curPath
+
+        for device in devices
+            if device == targetIp then continue
+            if visited.indexOf(device) != null then continue
+            visited.push(device)
+
+            subRouter = get_router(device)
+            if subRouter then
+                queue.push([subRouter, curPath + [device]])
+                continue
+            end if
+
+            subSwitch = get_switch(device)
+            if subSwitch then
+                // switches extend a LAN rather than gating a new one —
+                // walking through one adds no hop of its own
+                queue.push([subSwitch, curPath])
+            end if
+        end for
+    end while
+
+    return null
+end function
+
+// ── ProxyStatus ───────────────────────────────────────────────
+ProxyStatus = function()
+    if not gco.hasIndex("proxyChain") or not gco.proxyChain or gco.proxyChain.len == 0 then
+        print(c.yellow + "no proxy chain active" + c.ennd)
+        return
+    end if
+    print(c.cyan + "current proxy chain:" + c.ennd)
+    print(c.grey + "  you" + c.ennd)
+    i = 0
+    for hop in gco.proxyChain
+        if typeof(hop) == "shell" then hopIp = hop.host_computer.public_ip
+        if typeof(hop) == "computer" then hopIp = hop.public_ip
+        print(c.grey + "   └─ " + c.ennd + c.gold + "hop " + (i + 1) + " : " + hopIp + c.ennd)
+        i = i + 1
+    end for
+    print(c.grey + "   └─ " + c.ennd + c.orange + "target" + c.ennd)
+end function
+
+// ── ProxyClear ────────────────────────────────────────────────
+ProxyClear = function()
+    gco.proxyChain = null
+    gco.proxyDepth = 0
+    globals.object = null
+    globals.remotePath = "/"
+    print(c.cyan + "proxy chain cleared" + c.ennd)
+end function
+
+// ── HackLan ───────────────────────────────────────────────────
+HackLan = function(lanIp)
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>hacklan: not holding remote shell" + c.ennd)
+        return
+    end if
+    if not is_valid_ip(lanIp) then
+        print(c.yellow + "<b>hacklan: invalid LAN ip: " + lanIp + c.ennd)
+        return
+    end if
+
+    rcomp = object.host_computer
+
+    // jump — copy our metaxploit to target
+    print(c.orange + "Jumping metaxploit to target..." + c.ennd)
+    me = get_shell
+    me.scp(currentPath + "/metaxploit.so", "/home/guest", object)
+    mxCheck = rcomp.File("/home/guest/metaxploit.so")
+    if not mxCheck then
+        print(c.yellow + "<b>hacklan: metaxploit upload failed" + c.ennd)
+        return
+    end if
+
+    // write scanner that uses OUR metaxploit to scan target libs
+    print(c.orange + "Writing scanner to target..." + c.ennd)
+    rcomp.touch("/home/guest", "hlx.src")
+    srcFile = rcomp.File("/home/guest/hlx.src")
+    if not srcFile then
+        print(c.yellow + "<b>hacklan: could not write script" + c.ennd)
+        return
+    end if
+
+    q = char(34)
+    n = char(10)
+    src = "gco = get_custom_object" + n
+    src = src + "selfPath = program_path.split(char(47))[:-1].join(char(47))" + n
+    src = src + "metaxploit = include_lib(selfPath + char(47) + " + q + "metaxploit.so" + q + ")" + n
+    src = src + "if not metaxploit then exit(" + q + "no metaxploit" + q + ")" + n
+    src = src + "libDir = get_shell.host_computer.File(" + q + "/lib" + q + ")" + n
+    src = src + "if not libDir then exit(" + q + "no /lib" + q + ")" + n
+    src = src + "libs = libDir.get_files" + n
+    src = src + "if not libs then exit(" + q + "no libs" + q + ")" + n
+    src = src + "lanIp = gco.hlLanIp" + n
+    src = src + "for lib in libs" + n
+    src = src + "  if not lib.is_binary then continue" + n
+    src = src + "  ml = metaxploit.load(" + q + "/lib/" + q + " + lib.name)" + n
+    src = src + "  if not ml then continue" + n
+    src = src + "  if ml.is_patched then continue" + n
+    src = src + "  mems = metaxploit.scan(ml)" + n
+    src = src + "  if not mems then continue" + n
+    src = src + "  for mem in mems" + n
+    src = src + "    addrs = metaxploit.scan_address(ml, mem).split(" + q + "Unsafe check: " + q + ")" + n
+    src = src + "    for addr in addrs" + n
+    src = src + "      if addr == addrs[0] then continue" + n
+    src = src + "      val = addr[addr.indexOf(" + q + "<b>" + q + ") + 3 : addr.indexOf(" + q + "</b>" + q + ")]" + n
+    src = src + "      obj = ml.overflow(mem, val, lanIp)" + n
+    src = src + "      if typeof(obj) == " + q + "computer" + q + " or typeof(obj) == " + q + "shell" + q + " then" + n
+    src = src + "        gco.hlFound = lib.name + " + q + "|" + q + " + mem + " + q + "|" + q + " + val + " + q + "|" + q + " + typeof(obj)" + n
+    src = src + "        gco.hlResult = obj" + n
+    src = src + "        exit" + n
+    src = src + "      end if" + n
+    src = src + "    end for" + n
+    src = src + "  end for" + n
+    src = src + "end for" + n
+
+    srcFile.set_content(src)
+
+    print(c.orange + "Building on target..." + c.ennd)
+    object.build("/home/guest/hlx.src", "/home/guest", false)
+    binFile = rcomp.File("/home/guest/hlx")
+    if not binFile then
+        print(c.yellow + "<b>hacklan: build failed" + c.ennd)
+        srcFile.delete
+        mxCheck.delete
+        return
+    end if
+
+    gco.hlLanIp = lanIp
+    gco.hlFound = null
+    gco.hlResult = null
+    print(c.orange + "Scanning target libs for bounce to " + lanIp + " ..." + c.ennd)
+    object.launch("/home/guest/hlx")
+
+    // cleanup
+    srcFile.delete
+    binFile.delete
+    mxCheck.delete
+
+    if not gco.hlFound or gco.hlFound == "" then
+        print(c.yellow + "<b>hacklan: no bounce found for " + lanIp + c.ennd)
+        return
+    end if
+
+    parts = gco.hlFound.split("|")
+    print(c.green + "  [+] " + parts[3] + " on " + lanIp + c.ennd)
+    print(c.grey + "  " + parts[0] + "  " + parts[1] + "  " + parts[2] + c.ennd)
+
+    if gco.hlResult then
+        globals.object = gco.hlResult
+        globals.remotePath = "/"
+        GETPERMS(globals.object)
+        print(c.green + "<b>hacklan: object set" + c.ennd)
+    end if
+end function
+
