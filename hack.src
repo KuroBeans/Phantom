@@ -507,6 +507,7 @@ ScanLan = function(ip, port, acceptComputer=false, skipPivot=false)
     // a prior target — reuse them and skip mx.scan()/scan_address()
     // entirely instead of rediscovering the same candidates every time
     exploits = KnownExploits(metalib.lib_name, metalib.version)
+    print(c.teal + "  debug: edb has " + globals.edb.len + " total entr(ies) — " + exploits.len + " match(es) for [" + metalib.lib_name + "] [" + metalib.version + "]" + c.ennd)
     if exploits.len > 0 then
         print(c.grey + "  known exploits for " + metalib.lib_name + " " + metalib.version + " — skipping scan (see db.txt)" + c.ennd)
     else
@@ -1188,3 +1189,1537 @@ ProxyWithChainSaw = function(hops)
 
     print(c.green + "<b>Proxy is now active on final hop" + c.ennd)
     end function
+
+// ── GetLogs ──────────────────────────────────────────────────────
+// Standalone site-list auto-exploiter — give it a file of hostnames
+// (one per line), it nslookups each, exploits whatever's bound to
+// port 80 using phantom's own db.txt-known exploits first (same
+// KnownExploits/EdbAdd every other hacking command already uses),
+// falling back to a full scan/decode (same decode logic ScanLan/Grab
+// use) if nothing's known yet, then downloads /var/system.log from
+// whichever ones it manages to root.
+//
+// Rewritten from the original payloads/getlogs.src, which depended on
+// an external /root/ja/db/remote_service exploit-signature folder not
+// part of this codebase, and was never wired to a command — this
+// version is fully self-contained and only ever touches phantom's own
+// db.txt.
+GetLogs = function(sitesPath, destFolder)
+Size = "<size=125%"
+print(c.copper + Size + "GetLog by: XANADU")
+wait(2)
+    sitesFile = GetFile(sitesPath, myComp, true)
+    if not sitesFile then
+        print(c.yellow + "<b>getlogs: " + sitesPath + " not found" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+    content = sitesFile.get_content
+    if not content or content == "" then
+        print(c.yellow + "<b>getlogs: " + sitesPath + " is empty" + c.ennd)
+        return
+    end if
+
+    sites = []
+    for line in content.split(char(10))
+        line = line.replace(char(13), "")
+        if line != "" then sites.push(line)
+    end for
+    if sites.len == 0 then
+        print(c.yellow + "<b>getlogs: no sites in " + sitesPath + c.ennd)
+        return
+    end if
+
+    // self-heal the dest folder the same way db.txt/plant already do,
+    // instead of requiring it to exist beforehand
+    if not myComp.File(destFolder) then
+        destParts  = destFolder.split("/")
+        destName   = destParts[-1]
+        destParent = destFolder[:destFolder.len - destName.len - 1]
+        if destParent == "" then destParent = "/"
+        myComp.create_folder(destParent, destName)
+    end if
+    if not myComp.File(destFolder) then
+        print(c.yellow + "<b>getlogs: could not create dest folder " + destFolder + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    print(char(10) + c.cyan + "<b>GETLOGS  " + sites.len + " site(s)" + c.ennd)
+    print(c.grey + "================================================================" + c.ennd)
+
+    rooted     = 0
+    downloaded = 0
+    idx = 1
+    for site in sites
+        print(c.orange + "  [" + idx + "/" + sites.len + "] " + site + " ..." + c.ennd)
+        ip = nslookup(site)
+        if not is_valid_ip(ip) then
+            print(c.grey + "    could not resolve" + c.ennd)
+            idx = idx + 1
+            continue
+        end if
+
+        ns = metaxploit.net_use(ip, 80)
+        if not ns then
+            print(c.grey + "    nothing on port 80" + c.ennd)
+            idx = idx + 1
+            continue
+        end if
+
+        metalib = ns.dump_lib
+        if not metalib then
+            print(c.grey + "    no lib bound" + c.ennd)
+            idx = idx + 1
+            continue
+        end if
+
+        shell = null
+        for pair in KnownExploits(metalib.lib_name, metalib.version)
+            if shell then break
+            obj = metalib.overflow(pair[0], pair[1])
+            EdbAdd(metalib.lib_name, metalib.version, pair[0], pair[1], typeof(obj), "")
+            if typeof(obj) == "shell" then shell = obj
+        end for
+
+        if not shell then
+            mems = metaxploit.scan(metalib)
+            if mems then
+                for mem in mems
+                    if shell then break
+                    addrs = metaxploit.scan_address(metalib, mem).split("Unsafe check: ")
+                    for res in addrs
+                        if shell then break
+                        if res == addrs[0] then continue
+                        valStart = res.indexOf("<b>")
+                        if valStart == null then continue
+                        valEnd = res.indexOf("</b>", valStart)
+                        val = res[valStart + 3 : valEnd]
+                        if val == "" then continue
+                        obj = metalib.overflow(mem, val)
+                        EdbAdd(metalib.lib_name, metalib.version, mem, val, typeof(obj), "")
+                        if typeof(obj) == "shell" then shell = obj
+                    end for
+                end for
+            end if
+        end if
+
+        if not shell then
+            print(c.grey + "    no working exploit" + c.ennd)
+            idx = idx + 1
+            continue
+        end if
+
+        rooted = rooted + 1
+        logFile = shell.host_computer.File("/var/system.log")
+        if not logFile or not logFile.has_permission("r") then
+            print(c.yellow + "    rooted but system.log unreadable" + c.ennd)
+            idx = idx + 1
+            continue
+        end if
+
+        result = shell.scp("/var/system.log", destFolder, myShell)
+        if typeof(result) == "string" and result != "" then
+            print(c.yellow + "    download failed: " + result + c.ennd)
+            idx = idx + 1
+            continue
+        end if
+
+        dl = myComp.File(destFolder + "/system.log")
+        if dl then dl.rename(site)
+        downloaded = downloaded + 1
+        print(c.lime + "    [+] downloaded system.log -> " + site + c.ennd)
+        idx = idx + 1
+    end for
+
+    print(c.grey + "================================================================" + c.ennd)
+    print(c.cyan + "getlogs complete — " + rooted + "/" + sites.len + " rooted, " + downloaded + " log(s) downloaded" + c.ennd)
+end function
+
+CmdGetLogs = function(inp)
+    if inp.len < 2 then
+		
+        print("<b>Usage: getlogs <sitelistfile> [opt:destfolder]")
+        print(c.grey + char(9) + "e.g.  getlogs sites.txt" + c.ennd)
+        print(c.grey + char(9) + "sitelistfile: one hostname per line" + c.ennd)
+        print(c.grey + char(9) + "destfolder defaults to /root/Downloads" + c.ennd)
+		r = [c.cyan, c.lime, c.pink, c.gold, c.purple, c.copper, c.teal, c.rust]
+    	r.shuffle
+   		a = r[0]
+    	b = r[1]
+		print(b + "<size=125%>GetLogs by: " + a + "XANADU")
+        return
+    end if
+    destFolder = "/root/Downloads"
+    if inp.len >= 3 then destFolder = inp[2]
+    GetLogs(inp[1], destFolder)
+end function
+CommandTable["getlogs"] = @CmdGetLogs
+
+// ── Report ───────────────────────────────────────────────────────
+// Full exploit report for a lib+version — deliberately does NOT stop
+// at the first working candidate the way scan/grab do. Tries every
+// candidate and prints a "Hooked: <user> <type>" line for each one
+// that actually produces something, so you see everything this exact
+// lib+version can do in one pass (root file, guest shell, a
+// firewall-disable side effect, etc.) instead of just the first hit.
+// Doesn't push/hold any of the resulting shells/computers anywhere —
+// this is a report, not an acquire — though every attempt (hit or
+// miss) still gets recorded to db.txt via EdbAdd same as scan/grab.
+//
+// Known candidates for this exact lib+version skip the decode step
+// entirely (metaxploit.scan()+scan_address(), the expensive part) and
+// go straight to re-trying the known mem/val pairs live — only a
+// genuinely new lib+version pays for a full scan. Previously this
+// always did a full scan regardless, so the same lib+version got
+// rescanned from scratch every single time.
+//
+// -v (verbose) switches to a MEMORY/VULNER/TYPE/USER table instead of
+// the default per-candidate print-as-you-go — needs every row
+// collected first so format_columns (same alignment helper GETPERMS
+// already uses) can line them all up together, so verbose mode prints
+// nothing until the whole scan finishes.
+TypeLabel = function(t)
+    if t == "shell" then return "SHELL"
+    if t == "computer" then return "COMPUTER"
+    if t == "file" then return "FILE"
+    if t == "firewall" then return "FIREWALL"
+    return "unknown"
+end function
+
+UserLabel = function(t, userCtx)
+    if t != "shell" and t != "computer" then return "-"
+    if userCtx == "root" then return "root"
+    return "User"
+end function
+
+// requirement text stripped of the game's own "* " bullet, re-shown
+// with phantom's own "--> " prefix per line instead
+FormatNote = function(reqText)
+    if reqText == "" then return ""
+    lines = reqText.split(char(10))
+    out = []
+    for ln in lines
+        t2 = ln
+        while t2.len > 0 and t2[0] == " "
+            t2 = t2[1:]
+        end while
+        if t2.len >= 2 and t2[:2] == "* " then t2 = t2[2:]
+        if t2 != "" then out.push("--> " + t2)
+    end for
+    return out.join(char(10))
+end function
+
+PrintReportVerbose = function(rows)
+    tableStr = "MEMORY VULNER TYPE USER"
+    for r in rows
+        tableStr = tableStr + char(10) + r["mem"] + " " + r["val"] + " " + r["typeLabel"] + " " + r["userLabel"]
+    end for
+    formatted = format_columns(tableStr)
+    fLines = formatted.split(char(10))
+    print(c.gold + fLines[0] + c.ennd)
+    i = 1
+    while i <= rows.len
+        r = rows[i - 1]
+        print(c.grey + fLines[i] + c.ennd)
+        if r.hasIndex("note") and r["note"] != "" then print(c.teal + FormatNote(r["note"]) + c.ennd)
+        print(c.grey + "----------------------------------------------------------------" + c.ennd)
+        i = i + 1
+    end while
+end function
+
+Report = function(ip, port, verbose)
+    if ip == "pt" then ip = publicTarget
+    if ip == "lt" then ip = localTarget
+    if not is_valid_ip(ip) then
+        print(c.yellow + "<b>report: invalid ip" + c.ennd)
+        return
+    end if
+    portInt = port.to_int
+    if typeof(portInt) != "number" then
+        print(c.yellow + "<b>report: invalid port" + c.ennd)
+        return
+    end if
+
+    ns = metaxploit.net_use(ip, portInt)
+    if not ns then
+        print(c.yellow + "<b>report: no net session on " + ip + ":" + port + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+    metalib = ns.dump_lib
+    if not metalib then
+        print(c.yellow + "<b>report: metalib not obtained" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    print(c.cyan + "scanning library: " + metalib.lib_name + " v" + metalib.version + c.ennd)
+
+    candidates = []
+    knownPairs = KnownExploits(metalib.lib_name, metalib.version)
+    if knownPairs.len > 0 then
+        print(c.grey + "  " + knownPairs.len + " known candidate(s) already in db.txt for this lib+version — skipping full scan" + c.ennd)
+        for pair in knownPairs
+            candidates.push({"mem": pair[0], "val": pair[1]})
+        end for
+    else
+        memList = metaxploit.scan(metalib)
+        if not memList then
+            print(c.yellow + "<b>report: no vulnerabilities found" + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+        for mem in memList
+            addrs = metaxploit.scan_address(metalib, mem).split("Unsafe check: ")
+            for res in addrs
+                if res == addrs[0] then continue
+                valStart = res.indexOf("<b>")
+                if valStart == null then continue
+                valEnd = res.indexOf("</b>", valStart)
+                val = res[valStart + 3 : valEnd]
+                if val == "" then continue
+                candidates.push({"mem": mem, "val": val})
+
+                // show whatever this candidate's raw scan_address text
+                // actually contains besides the highlighted value itself
+                // (requirement/precondition info, if the game includes
+                // any here) — strip just the raw <b> tags, phantom's own
+                // color styling instead of the game's, not a guess at
+                // specific wording since that's unconfirmed. db.txt has
+                // no room for this (just lib/ver/mem/val/type/user), so
+                // it's saved separately via gco for the memory-only
+                // report mode to reuse later.
+                reqText = res.replace("<b>", "").replace("</b>", "")
+                while reqText.len > 0 and (reqText[0] == char(10) or reqText[0] == " ")
+                    reqText = reqText[1:]
+                end while
+                while reqText.len > 0 and (reqText[-1] == char(10) or reqText[-1] == " ")
+                    reqText = reqText[:-1]
+                end while
+                if reqText != "" and reqText != val then
+                    gcoR = get_custom_object
+                    if not gcoR.hasIndex("reportNotes") then gcoR.reportNotes = {}
+                    gcoR.reportNotes[metalib.lib_name + "|" + metalib.version + "|" + mem + "|" + val] = reqText
+                end if
+            end for
+        end for
+    end if
+
+    hooked = 0
+    gcoN = get_custom_object
+    rows = []
+    for cand in candidates
+        mem = cand["mem"]
+        val = cand["val"]
+        noteKey = metalib.lib_name + "|" + metalib.version + "|" + mem + "|" + val
+        note = ""
+        if gcoN.hasIndex("reportNotes") and gcoN.reportNotes.hasIndex(noteKey) then note = gcoN.reportNotes[noteKey]
+
+        if not verbose then
+            print(c.grey + "  [" + mem + "]  " + c.gold + val + c.ennd)
+            if note != "" then print(c.teal + note + c.ennd)
+        end if
+
+        obj = metalib.overflow(mem, val)
+        t = typeof(obj)
+        userCtx = ""
+        if t == "shell" or t == "computer" then
+            userCtx = GetUserCtx(obj)
+            EdbAdd(metalib.lib_name, metalib.version, mem, val, t, userCtx)
+            hooked = hooked + 1
+            if not verbose then print(c.lime + "  [+] Hooked: " + userCtx + " " + t + c.ennd)
+        else if t == "file" then
+            EdbAdd(metalib.lib_name, metalib.version, mem, val, t, "")
+            hooked = hooked + 1
+            if not verbose then print(c.lime + "  [+] Hooked: file" + c.ennd)
+        else
+            EdbAdd(metalib.lib_name, metalib.version, mem, val, t, "")
+            // exploratory: haven't confirmed what typeof() returns for
+            // a firewall-disable side-effect exploit — same uncertain
+            // case flagged elsewhere in this codebase (ProxyWithChainSaw,
+            // WStack, etc.) — print loudly if it ever shows up here too
+            if t == "firewall" then
+                hooked = hooked + 1
+                if not verbose then print(c.orange + "  [+] Hooked: firewall_disable" + c.ennd)
+            end if
+        end if
+
+        if verbose then
+            rows.push({"mem": mem, "val": val, "typeLabel": TypeLabel(t), "userLabel": UserLabel(t, userCtx), "note": note})
+        else
+            print(c.grey + "----------------------------------------------------------------" + c.ennd)
+        end if
+    end for
+
+    if verbose then PrintReportVerbose(rows)
+    print(c.cyan + "report complete — " + hooked + " candidate(s) hooked, " + candidates.len + " tried" + c.ennd)
+end function
+
+// ── ReportFromMemory ─────────────────────────────────────────────
+// Same report shape as Report(), but sourced entirely from db.txt —
+// zero live scanning. Every candidate Report() (or scan/grab/etc.)
+// has ever recorded for this exact lib+version is already sitting in
+// globals.edb with its outcome type/user, so there's nothing to
+// re-discover on a repeat visit — just print what's already known.
+ReportFromMemory = function(libName, libVer, verbose)
+    matches = []
+    if globals.edb != null then
+        for e in globals.edb
+            exVer = ""
+            if e.hasIndex("ver") then exVer = e["ver"]
+            if e["lib"] == libName and exVer == libVer then matches.push(e)
+        end for
+    end if
+    if matches.len == 0 then
+        print(c.yellow + "<b>report: no db.txt entries for " + libName + " " + libVer + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+
+    print(c.cyan + "reporting from memory: " + libName + " v" + libVer + "  (" + matches.len + " known candidate(s))" + c.ennd)
+    gcoR = get_custom_object
+    hooked = 0
+    rows = []
+    for e in matches
+        t = ""
+        if e.hasIndex("type") then t = e["type"]
+        userCtx = ""
+        if e.hasIndex("user") then userCtx = e["user"]
+        noteKey = libName + "|" + libVer + "|" + e["mem"] + "|" + e["val"]
+        note = ""
+        if gcoR.hasIndex("reportNotes") and gcoR.reportNotes.hasIndex(noteKey) then note = gcoR.reportNotes[noteKey]
+
+        if not verbose then
+            print(c.grey + "  [" + e["mem"] + "]  " + c.gold + e["val"] + c.ennd)
+            if note != "" then print(c.teal + note + c.ennd)
+        end if
+
+        if t == "shell" or t == "computer" then
+            hooked = hooked + 1
+            if not verbose then print(c.lime + "  [+] Hooked: " + userCtx + " " + t + c.ennd)
+        else if t == "file" then
+            hooked = hooked + 1
+            if not verbose then print(c.lime + "  [+] Hooked: file" + c.ennd)
+        else if t == "firewall" then
+            hooked = hooked + 1
+            if not verbose then print(c.orange + "  [+] Hooked: firewall_disable" + c.ennd)
+        else if not verbose then
+            if t == "null" then
+                print(c.grey + "  (tried — no result)" + c.ennd)
+            else
+                print(c.grey + "  (not yet attempted)" + c.ennd)
+            end if
+        end if
+
+        if verbose then
+            rows.push({"mem": e["mem"], "val": e["val"], "typeLabel": TypeLabel(t), "userLabel": UserLabel(t, userCtx), "note": note})
+        else
+            print(c.grey + "----------------------------------------------------------------" + c.ennd)
+        end if
+    end for
+
+    if verbose then PrintReportVerbose(rows)
+    print(c.cyan + "report complete — " + hooked + "/" + matches.len + " candidate(s) hooked (from memory)" + c.ennd)
+end function
+
+// report                       report on the most recently recorded
+//                              lib+version in db.txt, no scan
+// report [libname] [version]   report on a specific lib+version from
+//                              db.txt, no scan
+// report [ip] [port]           live full exploit report against ip:port
+//                              — known candidates skip the scan/decode
+//                              step, a new lib+version pays for it once
+CmdReport = function(inp)
+    verbose = inp.indexOf("-v") != null
+    args = []
+    for tok in inp
+        if tok != "-v" then args.push(tok)
+    end for
+
+    if args.len == 1 then
+        if globals.edb == null or globals.edb.len == 0 then
+            print(c.yellow + "<b>report: db.txt is empty — nothing to report on yet" + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+        last = globals.edb[-1]
+        libVer = ""
+        if last.hasIndex("ver") then libVer = last["ver"]
+        ReportFromMemory(last["lib"], libVer, verbose)
+        return
+    end if
+
+    if args.len == 3 then
+        if is_valid_ip(args[1]) then
+            Report(args[1], args[2], verbose)
+        else
+            ReportFromMemory(args[1], args[2], verbose)
+        end if
+        return
+    end if
+
+    print("<b>Usage: report [-v]")
+    print(c.grey + "  report [-v]                       report on the most recently recorded lib+version, no scan" + c.ennd)
+    print(c.grey + "  report [-v] [libname] [version]   report on a specific lib+version from memory, no scan" + c.ennd)
+    print(c.grey + "  report [-v] [ip] [port]           live full exploit report — tries EVERY candidate, doesn't" + c.ennd)
+    print(c.grey + "                                     stop at the first hit like scan/grab; known candidates skip" + c.ennd)
+    print(c.grey + "                                     the scan/decode step, logs to db.txt" + c.ennd)
+    print(c.grey + "  -v                                 verbose: MEMORY/VULNER/TYPE/USER table instead of live prints" + c.ennd)
+end function
+CommandTable["report"] = @CmdReport
+
+
+
+
+
+// ================================================================
+//  core.src  |  phantom module  |  rshell / cover / harvest / wifi / edb
+// ================================================================
+
+// ── Cmd wrappers — each self-registers into CommandTable right after ─────
+// ── its own definition (see the CommandTable[...] line below it) ─────
+CmdRshell = function(inp)
+    RShell(inp[1:])
+end function
+CommandTable["rshell"] = @CmdRshell
+
+CmdCover = function(inp)
+    Cover
+end function
+CommandTable["cover"] = @CmdCover
+
+CmdHarvest = function(inp)
+    if inp.len >= 2 and inp[1] == "--stack" then
+        CmdHarveststack(inp)
+    else
+        Harvest
+    end if
+end function
+CommandTable["harvest"] = @CmdHarvest
+
+CmdWifi = function(inp)
+    WiFiCrack
+end function
+CommandTable["wifi"] = @CmdWifi
+
+CmdEdb = function(inp)
+    ExploitDB(inp[1:])
+end function
+CommandTable["edb"] = @CmdEdb
+
+// ops.src | cover + harvest
+// cover.src  |  phantom module  |  stealth + rshell
+
+// ── Cover ────────────────────────────────────────────────────────
+Cover = function()
+    if typeof(object) != "shell" then
+        print(c.yellow + "<b>cover: not holding remote shell" + c.ennd)
+        return
+    end if
+    comp = object.host_computer
+    print(c.orange + "Running cover..." + c.ennd)
+
+    // 1. corrupt remote system.log
+    ans = ""
+    while ans != "y" and ans != "n"
+        ans = user_input(c.yellow + "Corrupt remote system.log? (y/n): " + c.ennd)
+    end while
+    if ans == "y" then
+        test = comp.touch("/home/guest", "system.log")
+        if test != false then
+            f = comp.File("/home/guest/system.log")
+            if f then
+                res = f.move("/var", "system.log")
+                if res != "permission denied" then
+                    lf = comp.File("/var/system.log")
+                    if lf and not lf.is_binary then
+                        lf.set_owner("root")
+                        lf.set_group("root")
+                        lf.chmod("o-w")
+                        lf.chmod("g-w")
+                        print(c.green + "  [+] system.log corrupted" + c.ennd)
+                    end if
+                else
+                    print(c.yellow + "  [-] system.log: permission denied" + c.ennd)
+                end if
+            end if
+        end if
+    end if
+
+    // 2. wipe uploaded files
+    print(c.orange + "  Cleaning uploaded files..." + c.ennd)
+    cleanPaths = ["/home/guest/ar", "/home/guest/ls", "/tmp/ar", "/tmp/ls", "/root/ar", "/root/ls"]
+    for path in cleanPaths
+        f = comp.File(path)
+        if f then
+            f.delete
+            print(c.green + "  [+] deleted: " + path + c.ennd)
+        end if
+    end for
+
+    // wipe rt folders
+    rtPaths = ["/home/guest/rt", "/tmp/rt", "/root/rt"]
+    for path in rtPaths
+        d = comp.File(path)
+        if d then
+            files = d.get_files
+            if files then
+                for f in files
+                    f.delete
+                end for
+            end if
+            d.delete
+            print(c.green + "  [+] deleted: " + path + c.ennd)
+        end if
+    end for
+
+    // 3. corrupt local system.log
+    ans2 = ""
+    while ans2 != "y" and ans2 != "n"
+        ans2 = user_input(c.yellow + "Corrupt LOCAL system.log? (y/n): " + c.ennd)
+    end while
+    if ans2 == "y" then
+        test = myComp.touch("/home/guest", "system.log")
+        if test != false then
+            f = myComp.File("/home/guest/system.log")
+            if f then
+                res = f.move("/var", "system.log")
+                if res != "permission denied" then
+                    lf = myComp.File("/var/system.log")
+                    if lf and not lf.is_binary then
+                        lf.set_owner("root")
+                        lf.set_group("root")
+                        lf.chmod("o-w")
+                        lf.chmod("g-w")
+                        print(c.green + "  [+] local system.log corrupted" + c.ennd)
+                    end if
+                end if
+            end if
+        end if
+    end if
+
+    // 4. drop remote shell
+    ans3 = ""
+    while ans3 != "y" and ans3 != "n"
+        ans3 = user_input(c.yellow + "Drop remote shell? (y/n): " + c.ennd)
+    end while
+    if ans3 == "y" then
+        globals.object = null
+        globals.remotePath = "/"
+        print(c.green + "  [+] remote shell dropped" + c.ennd)
+    end if
+
+    print(c.green + "<b>cover complete" + c.ennd)
+end function
+
+// ── RShell ───────────────────────────────────────────────────────
+RShell = function(args)
+    cmd = ""
+    if args.len > 0 then cmd = args[0]
+
+    // rshell — poll for connections exactly like rshell-interface
+    if cmd == "" then
+        if not gco.hasIndex("rshellServer") or not gco.rshellServer then
+            print(c.yellow + "<b>rshell: no server configured — run rshell init first" + c.ennd)
+            return
+        end if
+        // need to be holding the server shell to poll
+        if typeof(object) != "shell" then
+            print(c.yellow + "<b>rshell: grab the server shell first, then run rshell" + c.ennd)
+            print(c.grey + "  server: " + gco.rshellServer + ":" + gco.rshellPort + c.ennd)
+            return
+        end if
+        if object.host_computer.public_ip != gco.rshellServer then
+            print(c.yellow + "<b>rshell: not holding server shell" + c.ennd)
+            print(c.grey + "  grab " + gco.rshellServer + " first, then run rshell" + c.ennd)
+            return
+        end if
+        // write rshell-interface script to server and run it
+        rcomp = object.host_computer
+        q = char(34)
+        n = char(10)
+        rcomp.touch("/home/guest", "rsh.src")
+        sf = rcomp.File("/home/guest/rsh.src")
+        if not sf then
+            print(c.yellow + "<b>rshell: could not write script to server" + c.ennd)
+            return
+        end if
+        src = "selfPath = program_path.split(char(47))[:-1].join(char(47))" + n
+        src = src + "metaxploit = include_lib(selfPath + char(47) + " + q + "metaxploit.so" + q + ")" + n
+        src = src + "if not metaxploit then metaxploit = include_lib(" + q + "/lib/metaxploit.so" + q + ")" + n
+        src = src + "if not metaxploit then exit(" + q + "no metaxploit" + q + ")" + n
+        src = src + "gco = get_custom_object" + n
+        src = src + "shells = []" + n
+        src = src + "while shells.len == 0" + n
+        src = src + "  shells = metaxploit.rshell_server" + n
+        src = src + "  if typeof(shells) == " + q + "string" + q + " then exit(shells)" + n
+        src = src + "  if shells.len == 0 then wait(2)" + n
+        src = src + "end while" + n
+        src = src + "gco.rshShells = shells" + n
+        sf.set_content(src)
+        print(c.orange + "Building shell catcher on server..." + c.ennd)
+        object.build("/home/guest/rsh.src", "/home/guest", false)
+        bf = rcomp.File("/home/guest/rsh")
+        if not bf then
+            print(c.yellow + "<b>rshell: build failed" + c.ennd)
+            sf.delete
+            return
+        end if
+        print(c.orange + "Waiting for incoming shells..." + c.ennd)
+        gco.rshShells = null
+        object.launch("/home/guest/rsh")
+        sf.delete
+        bf.delete
+        if not gco.rshShells or gco.rshShells.len == 0 then
+            print(c.yellow + "<b>rshell: no shells connected yet" + c.ennd)
+            return
+        end if
+        shells = gco.rshShells
+        print(c.green + shells.len + " shell(s) connected!" + c.ennd)
+        i = 1
+        for s in shells
+            pub  = s.host_computer.public_ip
+            lan  = s.host_computer.local_ip
+            name = s.host_computer.get_name
+            print(c.gold + "  [" + i + "]  " + c.white + name + c.ennd + "  pub:" + c.cyan + pub + c.ennd + "  lan:" + c.cyan + lan + c.ennd)
+            i = i + 1
+        end for
+        sel = ""
+        ok = false
+        while not ok
+            sel = user_input(c.cyan + "Select (1-" + shells.len + ") or q: " + c.ennd)
+            if sel == "q" then return
+            sel = sel.to_int
+            if typeof(sel) == "number" and sel >= 1 and sel <= shells.len then ok = true
+        end while
+        globals.object = shells[sel - 1]
+        globals.remotePath = "/"
+        print(c.green + "<b>rshell: shell set as active object" + c.ennd)
+        GETPERMS(globals.object)
+        return
+    end if
+
+    // rshell init — install rshelld on current remote shell
+    if cmd == "init" then
+        if typeof(object) != "shell" then
+            print(c.yellow + "<b>rshell init: not holding remote shell" + c.ennd)
+            return
+        end if
+        port = 1222
+        if args.len >= 2 then port = args[1].to_int
+        rcomp = object.host_computer
+        myPubIp = get_router.public_ip
+        if rcomp.public_ip == myPubIp then
+            print(c.yellow + "<b>rshell init: that's your own machine — grab a remote server first" + c.ennd)
+            return
+        end if
+        print(c.orange + "Installing rshell server on " + rcomp.public_ip + "..." + c.ennd)
+        me = get_shell
+        // upload librshell.so - try currentPath then local /lib
+        lrBin = myComp.File(currentPath + "/librshell.so")
+        if not lrBin then lrBin = myComp.File("/lib/librshell.so")
+        if lrBin then
+            me.scp(lrBin.path, "/lib", object)
+        else
+            print(c.yellow + "  warning: librshell.so not found locally — target needs it in /lib" + c.ennd)
+        end if
+        // run rshell-server script exactly as in-game
+        q = char(34)
+        n = char(10)
+        rcomp.touch("/home/guest", "rsi.src")
+        sf = rcomp.File("/home/guest/rsi.src")
+        if not sf then
+            print(c.yellow + "<b>rshell init: could not write script" + c.ennd)
+            return
+        end if
+        src = "selfPath = program_path.split(char(47))[:-1].join(char(47))" + n
+        src = src + "rshelld = include_lib(" + q + "/lib/librshell.so" + q + ")" + n
+        src = src + "if not rshelld then rshelld = include_lib(selfPath + char(47) + " + q + "librshell.so" + q + ")" + n
+        src = src + "if not rshelld then exit(" + q + "librshell.so not found" + q + ")" + n
+        src = src + "output = rshelld.install_service" + n
+        src = src + "if output != true then exit(output)" + n
+        src = src + "s = get_shell" + n
+        src = src + "svc = s.host_computer.File(" + q + "/server/rshelld" + q + ")" + n
+        src = src + "if not svc then svc = s.host_computer.File(" + q + "/etc/init.d/rshelld" + q + ")" + n
+        src = src + "if svc then s.launch(svc.path, " + q + "start" + q + ")" + n
+        sf.set_content(src)
+        object.build("/home/guest/rsi.src", "/home/guest", false)
+        bf = rcomp.File("/home/guest/rsi")
+        if not bf then
+            print(c.yellow + "<b>rshell init: build failed" + c.ennd)
+            sf.delete
+            return
+        end if
+        object.launch("/home/guest/rsi")
+        sf.delete
+        bf.delete
+        gco.rshellServer = rcomp.public_ip
+        gco.rshellPort   = port
+        print(c.green + "rshell: server ready on " + rcomp.public_ip + ":" + port + c.ennd)
+        print(c.grey + "  run rshell infect on targets to plant callback" + c.ennd)
+        return
+    end if
+
+    // rshell infect — plant rshell_client on current target
+    if cmd == "infect" then
+        if typeof(object) != "shell" then
+            print(c.yellow + "<b>rshell infect: not holding remote shell" + c.ennd)
+            return
+        end if
+        if gco.hasIndex("rshellServer") and gco.rshellServer then
+            serverIp = gco.rshellServer
+        else
+            print(c.yellow + "<b>rshell infect: no server configured — run rshell init first" + c.ennd)
+            return
+        end if
+        port = 1222
+        if gco.hasIndex("rshellPort") and gco.rshellPort then port = gco.rshellPort
+        procName = "rshell_client"
+        if args.len >= 2 then serverIp = args[1]
+        if args.len >= 3 then port = args[2].to_int
+        if args.len >= 4 then procName = args[3]
+        rcomp = object.host_computer
+        print(c.orange + "Infecting " + rcomp.public_ip + " -> " + serverIp + ":" + port + " as '" + procName + "'..." + c.ennd)
+        // upload metaxploit so the rsc script can find it via selfPath
+        me = get_shell
+        mxBin = myComp.File(currentPath + "/metaxploit.so")
+        if not mxBin then mxBin = myComp.File("/lib/metaxploit.so")
+        if mxBin then me.scp(mxBin.path, "/home/guest", object)
+        // write rshell_client call to target — runs on target's metaxploit
+        q = char(34)
+        n = char(10)
+        rcomp.touch("/home/guest", "rsc.src")
+        sf = rcomp.File("/home/guest/rsc.src")
+        if not sf then
+            print(c.yellow + "<b>rshell infect: could not write script" + c.ennd)
+            return
+        end if
+        src = "selfPath = program_path.split(char(47))[:-1].join(char(47))" + n
+        src = src + "metaxploit = include_lib(selfPath + char(47) + " + q + "metaxploit.so" + q + ")" + n
+        src = src + "if not metaxploit then metaxploit = include_lib(" + q + "/lib/metaxploit.so" + q + ")" + n
+        src = src + "if not metaxploit then exit(" + q + "no metaxploit" + q + ")" + n
+        src = src + "metaxploit.rshell_client(" + q + serverIp + q + ", " + port + ", " + q + procName + q + ")" + n
+        sf.set_content(src)
+        object.build("/home/guest/rsc.src", "/home/guest", false)
+        bf = rcomp.File("/home/guest/rsc")
+        if not bf then
+            print(c.yellow + "<b>rshell infect: build failed" + c.ennd)
+            sf.delete
+            return
+        end if
+        object.launch("/home/guest/rsc")
+        sf.delete
+        bf.delete
+        print(c.green + "rshell: client planted on " + rcomp.public_ip + c.ennd)
+        print(c.grey + "  grab server shell (" + serverIp + ") then run rshell to catch" + c.ennd)
+        return
+    end if
+
+    // rshell start — install and start rshelld locally
+    if cmd == "start" then
+        me = get_shell
+        comp = me.host_computer
+        rshelld = include_lib("/lib/librshell.so")
+        if not rshelld then rshelld = include_lib(currentPath + "/librshell.so")
+        if not rshelld then
+            print(c.yellow + "<b>rshell start: librshell.so not found" + c.ennd)
+            return
+        end if
+        svc = comp.File("/server/rshelld")
+        if not svc then svc = comp.File("/etc/init.d/rshelld")
+        if not svc then
+            output = rshelld.install_service
+            if output != true then
+                print(c.yellow + "<b>rshell start: " + output + c.ennd)
+                return
+            end if
+            svc = comp.File("/server/rshelld")
+            if not svc then svc = comp.File("/etc/init.d/rshelld")
+        end if
+        if svc then me.launch(svc.path, "start")
+        print(c.green + "rshell: rshelld started locally" + c.ennd)
+        return
+    end if
+
+    // rshell stop
+    if cmd == "stop" then
+        me = get_shell
+        comp = me.host_computer
+        svc = comp.File("/server/rshelld")
+        if not svc then svc = comp.File("/etc/init.d/rshelld")
+        if not svc then
+            print(c.yellow + "<b>rshell stop: rshelld not found" + c.ennd)
+            return
+        end if
+        me.launch(svc.path, "stop")
+        print(c.green + "rshell: rshelld stopped" + c.ennd)
+        return
+    end if
+
+    // rshell info
+    if cmd == "info" then
+        if gco.hasIndex("rshellServer") and gco.rshellServer then
+            print(c.cyan + "server: " + gco.rshellServer + ":" + gco.rshellPort + c.ennd)
+        else
+            print(c.yellow + "no server configured" + c.ennd)
+        end if
+        return
+    end if
+
+    print(c.grey + "rshell                       wait for shells (hold server shell first)" + c.ennd)
+    print(c.grey + "rshell init [port]           install rshelld on current remote shell" + c.ennd)
+    print(c.grey + "rshell infect [ip] [port]    plant rshell_client on current target" + c.ennd)
+    print(c.grey + "rshell start                 start rshelld locally" + c.ennd)
+    print(c.grey + "rshell stop                  stop rshelld locally" + c.ennd)
+    print(c.grey + "rshell info                  show server config" + c.ennd)
+end function
+// harvest.src  |  phantom module  |  filesystem intelligence gathering
+
+Harvest = function()
+    if typeof(object) == "shell" then
+        comp = object.host_computer
+    else if typeof(object) == "computer" then
+        comp = object
+    else
+        print(c.yellow + "<b>harvest: not holding remote shell or computer" + c.ennd)
+        return
+    end if
+
+    print(char(10) + c.cyan + "<b>HARVEST  " + comp.public_ip + c.ennd)
+    print(c.grey + "----------------------------------------------------------------" + c.ennd)
+
+    homeDir = comp.File("/home")
+    if not homeDir then
+        print(c.yellow + "<b>harvest: /home not found" + c.ennd)
+        return
+    end if
+
+    users = homeDir.get_folders
+    if not users or users.len == 0 then
+        print(c.yellow + "<b>harvest: no users found in /home" + c.ennd)
+        return
+    end if
+
+    targets = ["Mail.txt", "Bank.txt"]
+    cracked = 0
+    total   = 0
+    crackedList = []
+
+    for user in users
+        userName = user.name
+        hasOutput = false
+        for target in targets
+            f = comp.File("/home/" + userName + "/Config/" + target)
+            if not f then continue
+            if not f.has_permission("r") then
+                if not hasOutput then
+                    print(c.gold + char(10) + "  " + userName + c.ennd)
+                    hasOutput = true
+                end if
+                print(c.grey + "    " + target + "  [no read]" + c.ennd)
+                continue
+            end if
+            content = f.get_content
+            if not content or content == "" then continue
+            if not hasOutput then
+                print(c.gold + char(10) + "  " + userName + c.ennd)
+                hasOutput = true
+            end if
+            print(c.orange + "    " + target + c.ennd)
+            lines = content.split(char(10))
+            for line in lines
+                if line == "" then continue
+                parts = line.split(":")
+                if parts.len < 2 then
+                    print(c.grey + "      " + line + c.ennd)
+                    continue
+                end if
+                user2 = parts[0]
+                hash  = parts[1]
+                total = total + 1
+                pw = CrackHash(hash)
+                if pw then
+                    print(c.lime + "      " + user2 + c.ennd + c.grey + " : " + c.ennd + c.gold + "<b>" + pw + c.ennd)
+                    cracked = cracked + 1
+                    crackedList.push(user2 + ":" + pw)
+                else
+                    print(c.white + "      " + user2 + c.ennd + c.grey + " : " + c.ennd + c.red + "not found  " + c.grey + "[" + hash[:12] + "...]" + c.ennd)
+                end if
+            end for
+        end for
+    end for
+
+    print(char(10) + c.grey + "----------------------------------------------------------------" + c.ennd)
+
+    // also crack /etc/passwd
+    pf = comp.File("/etc/passwd")
+    if pf and pf.has_permission("r") then
+        content = pf.get_content
+        if content and content != "" then
+            print(c.orange + char(10) + "  /etc/passwd" + c.ennd)
+            for line in content.split(char(10))
+                if line == "" then continue
+                parts = line.split(":")
+                if parts.len < 2 then continue
+                user2 = parts[0]
+                hash  = parts[1]
+                total = total + 1
+                pw = CrackHash(hash)
+                if pw then
+                    print(c.lime + "      " + user2 + c.ennd + c.grey + " : " + c.ennd + c.gold + "<b>" + pw + c.ennd + c.grey + "  [SSH]" + c.ennd)
+                    cracked = cracked + 1
+                    crackedList.push(user2 + ":" + pw)
+                else
+                    print(c.white + "      " + user2 + c.ennd + c.grey + " : " + c.ennd + c.red + "not found  " + c.grey + "[" + hash[:12] + "...]" + c.ennd)
+                end if
+            end for
+        end if
+    end if
+
+    // lets "harvest | clip @b" capture every cracked user:pass pair —
+    // same comma-joined convention every other clip already uses.
+    // Explicit else clears stale pipeResult from a PRIOR object's
+    // harvest — without it, "foreach @b | harvest | write" would
+    // re-write the last hit's creds again on every empty-handed object.
+    if crackedList.len > 0 then
+        globals.pipeResult = crackedList.join(",")
+    else
+        globals.pipeResult = ""
+    end if
+
+    print(char(10) + c.grey + "----------------------------------------------------------------" + c.ennd)
+    print(c.cyan + "harvest complete — cracked " + cracked + "/" + total + " hashes" + c.ennd)
+end function
+// wifi.src  |  phantom module  |  wifi cracker
+
+WiFiCrack = function()
+    comp = myComp
+
+    // check for wifi interface
+    devices = comp.network_devices
+    if not devices then
+        print(c.yellow + "<b>wifi: no network devices found" + c.ennd)
+        return
+    end if
+
+    wifiInterface = null
+    for line in devices.split(char(10))
+        if line.indexOf("wlan") != null or line.indexOf("wifi") != null then
+            wifiInterface = line.split(" ")[0]
+            break
+        end if
+    end for
+
+    if not wifiInterface then
+        print(c.yellow + "<b>wifi: no WiFi interface found — need a wireless card" + c.ennd)
+        return
+    end if
+
+    print(c.cyan + "  interface: " + c.gold + wifiInterface + c.ennd)
+
+    // enable monitor mode
+    print(c.orange + "Enabling monitor mode..." + c.ennd)
+    monResult = gco.crypto.airmon("start", wifiInterface)
+    if typeof(monResult) == "string" then
+        print(c.yellow + "<b>wifi: monitor mode failed: " + monResult + c.ennd)
+        return
+    end if
+    print(c.green + "  monitor mode enabled" + c.ennd)
+
+    // scan for networks
+    print(c.orange + "Scanning for networks..." + c.ennd)
+    networks = comp.wifi_networks(wifiInterface)
+    if not networks or networks.len == 0 then
+        print(c.yellow + "<b>wifi: no networks found" + c.ennd)
+        gco.crypto.airmon("stop", wifiInterface)
+        return
+    end if
+
+    // display networks
+    print(char(10) + c.cyan + "<b>Available networks:" + c.ennd)
+    i = 0
+    for net in networks
+        parts = net.split(" ")
+        if parts.len < 3 then continue
+        bssid = parts[0]
+        pwr   = parts[1]
+        essid = parts[2]
+        print(c.gold + "  [" + i + "] " + c.ennd + c.white + "<b>" + essid + "</b>" + c.ennd + c.grey + "  " + bssid + "  PWR:" + pwr + c.ennd)
+        i = i + 1
+    end for
+
+    // select network
+    choiceStr = user_input(c.cyan + char(10) + "Select network: " + c.ennd)
+    idx = choiceStr.to_int
+    if typeof(idx) != "number" or idx < 0 or idx >= networks.len then
+        print(c.yellow + "<b>wifi: invalid selection" + c.ennd)
+        gco.crypto.airmon("stop", wifiInterface)
+        return
+    end if
+
+    selected = networks[idx].split(" ")
+    bssid    = selected[0]
+    pwrStr   = selected[1].replace("%", "")
+    essid    = selected[2]
+    pwr      = pwrStr.to_int
+    if not pwr or pwr <= 0 then pwr = 50
+
+    acksNeeded = floor(300000 / (pwr + 15))
+
+    print(char(10) + c.orange + "Targeting: " + c.pink + essid + c.ennd)
+    print(c.grey + "  BSSID: " + bssid + "  Signal: " + pwr + "%" + c.ennd)
+    print(c.orange + "  Sending ~" + acksNeeded + " ACKs..." + c.ennd)
+
+    // aireplay
+    aireplayResult = gco.crypto.aireplay(bssid, essid, acksNeeded)
+    if aireplayResult then print(c.grey + "  aireplay: " + aireplayResult + c.ennd)
+
+    // aircrack — pass the .cap file path
+    capFile = "/root /file.cap"
+    print(c.orange + "Running aircrack on " + capFile + "..." + c.ennd)
+    capFileObj = comp.File(capFile)
+    if not capFileObj then
+        print(c.yellow + "<b>wifi: cap file not found at " + capFile + c.ennd)
+        gco.crypto.airmon("stop", wifiInterface)
+        return
+    end if
+    if not capFileObj.is_binary then
+        print(c.yellow + "<b>wifi: invalid cap file" + c.ennd)
+        gco.crypto.airmon("stop", wifiInterface)
+        return
+    end if
+    password = gco.crypto.aircrack(capFileObj.path)
+
+    if password and password.len > 0 then
+        div
+        print(c.green + "<b>CRACK SUCCESSFUL!" + c.ennd)
+        print(c.gold + "  network : " + essid + c.ennd)
+        print(c.gold + "  password: " + c.lime + "<b>" + password + c.ennd)
+        div
+
+        // offer to connect
+        ans = user_input(c.cyan + "Connect to " + essid + " now? (y/n): " + c.ennd)
+        if ans == "y" then
+            print(c.orange + "Connecting..." + c.ennd)
+            result = comp.connect_wifi(wifiInterface, bssid, essid, password)
+            if result == 1 then
+                print(c.green + "  connected to " + essid + "!" + c.ennd)
+                // set as local target for further attacks
+                globals.localTarget = bssid
+                print(c.grey + "  local target set to " + bssid + c.ennd)
+            else
+                print(c.yellow + "<b>wifi: connect failed: " + result + c.ennd)
+            end if
+        end if
+    else
+        print(c.yellow + "<b>wifi: crack failed" + c.ennd)
+        print(c.grey + "  tips: move closer for better signal, or try again" + c.ennd)
+    end if
+
+    // cleanup
+    print(c.orange + "Stopping monitor mode..." + c.ennd)
+    gco.crypto.airmon("stop", wifiInterface)
+    print(c.green + "wifi: done" + c.ennd)
+end function
+
+// ── EdbSave helper ───────────────────────────────────────────────
+EdbSave = function()
+    if globals.edb == null then return
+    if globals.edb.len == 0 then return
+    out = ""
+    for e in globals.edb
+        ver = ""
+        if e.hasIndex("ver") then ver = e["ver"]
+        objType = ""
+        if e.hasIndex("type") then objType = e["type"]
+        userCtx = ""
+        if e.hasIndex("user") then userCtx = e["user"]
+        out = out + e["lib"] + "|" + ver + "|" + e["mem"] + "|" + e["val"] + "|" + objType + "|" + userCtx + char(10)
+    end for
+    savePath = globals.currentPath
+    if not savePath or savePath == "" then
+        print(c.yellow + "edb: globals.currentPath not set — cannot save" + c.ennd)
+        return
+    end if
+    comp = get_shell.host_computer
+    f = comp.File(savePath + "/db.txt")
+    if not f then
+        comp.touch(savePath, "db.txt")
+        f = comp.File(savePath + "/db.txt")
+    end if
+    if f and typeof(f) == "file" then
+        wr = f.set_content(out)
+        if typeof(wr) == "string" and wr != "" then
+            print(c.yellow + "edb: save error: " + wr + c.ennd)
+        end if
+    else
+        print(c.yellow + "edb: could not open " + savePath + "/db.txt for writing" + c.ennd)
+    end if
+end function
+
+// ── DeadLib helpers ──────────────────────────────────────────────
+// Persists which lib+version combos are known to have zero
+// exploitable vulnerabilities (patched, or a scan found nothing) so
+// scanlan/slb.src can skip straight past the expensive mx.scan() +
+// per-mem scan_address() decode pass the next time the same dead
+// lib+version turns up on a different target.
+DeadLibAdd = function(libName, libVer)
+    if not libName or libName == "" then return
+    if globals.deadLibs == null then globals.deadLibs = []
+    for d in globals.deadLibs
+        if d["lib"] == libName and d["ver"] == libVer then return
+    end for
+    globals.deadLibs.push({"lib": libName, "ver": libVer})
+    DeadLibSave()
+end function
+
+DeadLibSave = function()
+    if globals.deadLibs == null then return
+    if globals.deadLibs.len == 0 then return
+    out = ""
+    for d in globals.deadLibs
+        out = out + d["lib"] + "|" + d["ver"] + char(10)
+    end for
+    savePath = globals.currentPath
+    if not savePath or savePath == "" then return
+    comp = get_shell.host_computer
+    f = comp.File(savePath + "/deadlibs.txt")
+    if not f then
+        comp.touch(savePath, "deadlibs.txt")
+        f = comp.File(savePath + "/deadlibs.txt")
+    end if
+    if f and typeof(f) == "file" then f.set_content(out)
+end function
+
+IsDeadLib = function(libName, libVer)
+    if globals.deadLibs == null then return false
+    for d in globals.deadLibs
+        if d["lib"] == libName and d["ver"] == libVer then return true
+    end for
+    return false
+end function
+
+// ── KnownExploits ────────────────────────────────────────────────
+// Returns [mem, val] pairs already recorded in the exploit db for
+// this exact lib+version — any match, confirmed type or not. Lets
+// ScanLan skip mx.scan()/scan_address() entirely for a lib we've
+// already decoded candidates for on some other target. Matches Grab's
+// own db-matching loop, which has always used every entry regardless
+// of type — requiring a confirmed type here (previous version) meant
+// a db full of unconfirmed candidates (e.g. from updatelib's recon-
+// only scan) still silently forced a full re-scan every time.
+KnownExploits = function(libName, libVer)
+    out = []
+    if globals.edb == null then return out
+    for e in globals.edb
+        exVer = ""
+        if e.hasIndex("ver") then exVer = e["ver"]
+        if e["lib"] == libName and exVer == libVer then
+            out.push([e["mem"], e["val"]])
+        end if
+    end for
+    return out
+end function
+
+// ── EdbAdd helper ────────────────────────────────────────────────
+// objType/userCtx are optional — "shell"/"computer" and "root"/"guest"
+// when the caller actually tried overflow() and knows the result, ""
+// when it's just a decoded candidate nobody's fired yet (e.g.
+// updatelib's recon-only scan).
+EdbAdd = function(libName, libVer, memAddr, valStr, objType="", userCtx="")
+    if not libName or libName == "" or not memAddr or memAddr == "" or not valStr or valStr == "" then return
+    if globals.edb == null then globals.edb = []
+    for ex in globals.edb
+        exVer = ""
+        if ex.hasIndex("ver") then exVer = ex["ver"]
+        if ex["lib"] == libName and exVer == libVer and ex["mem"] == memAddr and ex["val"] == valStr then
+            // already known — backfill anything we now know and didn't before
+            changed = false
+            if objType != "" and (not ex.hasIndex("type") or ex["type"] == "") then
+                ex["type"] = objType
+                changed = true
+            end if
+            if userCtx != "" and (not ex.hasIndex("user") or ex["user"] == "") then
+                ex["user"] = userCtx
+                changed = true
+            end if
+            if changed then EdbSave()
+            return
+        end if
+    end for
+    entry = {}
+    entry["lib"] = libName
+    entry["ver"] = libVer
+    entry["mem"] = memAddr
+    entry["val"] = valStr
+    entry["type"] = objType
+    entry["user"] = userCtx
+    globals.edb.push(entry)
+    EdbSave()
+end function
+ExploitDB = function(args)
+    if globals.edb == null then globals.edb = []
+    dbPath = globals.currentPath + "/db.txt"
+    comp = get_shell.host_computer
+    cmd = ""
+    if args.len > 0 then cmd = args[0]
+
+    // edb — list all
+    if cmd == "" or cmd == "list" then
+        if globals.edb.len == 0 then
+            print(c.grey + "edb: empty — use 'edb add' or run scan" + c.ennd)
+            return
+        end if
+        print(char(10) + c.cyan + "<b>EXPLOIT DB  (" + globals.edb.len + " entries)" + c.ennd)
+        div
+        i = 1
+        for e in globals.edb
+            ver = ""
+            if e.hasIndex("ver") and e["ver"] != "" then ver = " " + e["ver"]
+            mem = e.hasIndex("mem") and e["mem"] or "?"
+            val = e.hasIndex("val") and e["val"] or "?"
+            print(c.gold + "  [" + i + "] " + c.ennd + c.white + "<b>" + e["lib"] + ver + c.ennd + c.grey + "  " + mem + "  " + val + c.ennd)
+            i = i + 1
+        end for
+        return
+    end if
+
+    // edb add [lib] [mem] [val]
+    if cmd == "add" then
+        if args.len < 4 then
+            print(c.yellow + "<b>Usage: edb add [lib] [mem] [val]" + c.ennd)
+            return
+        end if
+        entry = {}
+        entry["lib"] = args[1]
+        entry["mem"] = args[2]
+        entry["val"] = args[3]
+        globals.edb.push(entry)
+        print(c.green + "edb: added " + args[1] + "  " + args[2] + "  " + args[3] + "  [" + globals.edb.len + " total]" + c.ennd)
+        return
+    end if
+
+    // edb use [#] [opt:bounceIp] — grab using stored exploit
+    if cmd == "use" then
+        if args.len < 2 then
+            print(c.yellow + "<b>Usage: edb use [index] [opt:bounce-ip]" + c.ennd)
+            return
+        end if
+        idx = args[1].to_int - 1
+        if typeof(idx) != "number" or idx < 0 or idx >= globals.edb.len then
+            print(c.yellow + "<b>edb: invalid index" + c.ennd)
+            return
+        end if
+        e = globals.edb[idx]
+        if args.len >= 3 then
+            ScanRemoteLib(publicTarget, "0", args[2], e["lib"], e["mem"], e["val"])
+        else
+            Grab(publicTarget, "0", e["mem"], e["val"], null)
+        end if
+        return
+    end if
+
+    // edb save — write to disk
+    if cmd == "save" then
+        if globals.edb.len == 0 then
+            print(c.yellow + "<b>edb: nothing to save" + c.ennd)
+            return
+        end if
+        EdbSave()
+        print(c.green + "edb: saved " + globals.edb.len + " entries to db.txt" + c.ennd)
+        return
+    end if
+
+    // edb load — read from disk
+    if cmd == "load" then
+        f = comp.File(dbPath)
+        if not f or typeof(f) != "file" then
+            print(c.yellow + "<b>edb: db.txt not found at " + dbPath + c.ennd)
+            return
+        end if
+        content = f.get_content
+        if not content or content == "" then
+            print(c.yellow + "<b>edb: db.txt is empty" + c.ennd)
+            return
+        end if
+        globals.edb = []
+        loaded = 0
+        for line in content.split(char(10))
+            if line == "" then continue
+            line = line.replace(char(13), "")
+            if line == "" then continue
+            // split on first 5 pipes — 6-field (lib|ver|mem|val|type|user)
+            // is current, 5-field (no user), 4-field (no type/user), and
+            // 3-field (no ver/type/user) are older db.txt generations,
+            // all still readable
+            p1 = line.indexOf("|")
+            if p1 == null then continue
+            p2 = line.indexOf("|", p1 + 1)
+            if p2 == null then continue
+            p3 = line.indexOf("|", p2 + 1)
+            entry = {}
+            if p3 != null then
+                p4 = line.indexOf("|", p3 + 1)
+                entry["lib"] = line[:p1]
+                entry["ver"] = line[p1+1:p2]
+                entry["mem"] = line[p2+1:p3]
+                if p4 != null then
+                    p5 = line.indexOf("|", p4 + 1)
+                    if p5 != null then
+                        entry["val"] = line[p3+1:p4]
+                        entry["type"] = line[p4+1:p5]
+                        entry["user"] = line[p5+1:]
+                    else
+                        entry["val"] = line[p3+1:p4]
+                        entry["type"] = line[p4+1:]
+                        entry["user"] = ""
+                    end if
+                else
+                    entry["val"] = line[p3+1:]
+                    entry["type"] = ""
+                    entry["user"] = ""
+                end if
+            else
+                entry["lib"] = line[:p1]
+                entry["ver"] = ""
+                entry["mem"] = line[p1+1:p2]
+                entry["val"] = line[p2+1:]
+                entry["type"] = ""
+                entry["user"] = ""
+            end if
+            if entry["lib"] == "" or entry["mem"] == "" or entry["val"] == "" then continue
+            globals.edb.push(entry)
+            loaded = loaded + 1
+        end for
+        print(c.green + "edb: loaded " + loaded + " entries from db.txt" + c.ennd)
+        return
+    end if
+
+    // edb del [#]
+    if cmd == "del" then
+        if args.len < 2 then
+            print(c.yellow + "<b>Usage: edb del [index]" + c.ennd)
+            return
+        end if
+        idx = args[1].to_int - 1
+        if typeof(idx) != "number" or idx < 0 or idx >= globals.edb.len then
+            print(c.yellow + "<b>edb: invalid index" + c.ennd)
+            return
+        end if
+        globals.edb.remove(idx)
+        print(c.green + "edb: deleted entry " + (idx+1) + c.ennd)
+        return
+    end if
+
+    // edb clear
+    if cmd == "clear" then
+        globals.edb = []
+        print(c.green + "edb: cleared" + c.ennd)
+        return
+    end if
+
+    print(c.grey + "edb               list all entries" + c.ennd)
+    print(c.grey + "edb add [lib] [mem] [val]   add entry" + c.ennd)
+    print(c.grey + "edb use [#] [opt:lan-ip]    use exploit" + c.ennd)
+    print(c.grey + "edb save          write to db.txt" + c.ennd)
+    print(c.grey + "edb load          load from db.txt" + c.ennd)
+    print(c.grey + "edb del [#]       delete entry" + c.ennd)
+    print(c.grey + "edb clear         clear all" + c.ennd)
+end function
+
+// ── Sniff ────────────────────────────────────────────────────────
+// Wraps the game's own metaxploit.sniffer() — passively listens to
+// network traffic passing through whatever device phantom is
+// physically running on (jump onto a router first if you want to
+// snoop traffic passing through it, same as any other local-mode
+// command in this codebase — see the "Jumping" section in README).
+// Currently captures SSH/FTP credentials per Grey Hack's own docs.
+//
+// Single blocking call, matching the game's own official sniffer
+// tool exactly — confirmed (2026-07) that sniffer() blocks until it
+// catches a connection and closes whatever terminal called it as a
+// side effect when it does. Tried wrapping this in a disposable
+// launched process (payloads/psniff.src) to shield the calling
+// session, but myShell.launch() doesn't actually isolate a plain
+// compiled script the way it does a real windowed app like
+// Terminal.exe — the closure still propagated straight through it.
+// No known GreyScript-level workaround exists; this is a hard engine
+// limitation, not something phantom can route around. Use from a
+// session you're OK losing (e.g. a jumped throwaway instance) if you
+// want to protect your main one.
+Sniff = function(saveEncSource)
+    if not globals.metaxploit then
+        print(c.yellow + "<b>sniff: metaxploit not loaded" + c.ennd)
+        return
+    end if
+    print(c.orange + "<b>Listening for network traffic on this device — this blocks until a connection is caught, and catching one WILL close this terminal session as a side effect (confirmed, no workaround)." + c.ennd)
+    result = metaxploit.sniffer(saveEncSource)
+    if result == null then
+        print(c.yellow + "<b>sniff: could not start listener" + c.ennd)
+        return
+    end if
+    if result == "" then
+        print(c.grey + "sniff: no traffic captured" + c.ennd)
+    else
+        print(c.lime + "  [+] " + result + c.ennd)
+    end if
+end function
+
+// sniff [opt:-e]  — -e saves the encoding script source (metaxploit.
+// sniffer's own saveEncSource flag, per the game's docs)
+CmdSniff = function(inp)
+    saveEnc = inp.indexOf("-e") != null
+    Sniff(saveEnc)
+end function
+CommandTable["sniff"] = @CmdSniff
+
+// ── SmtpList ─────────────────────────────────────────────────────
+// Wraps crypto.so's smtp_user_list(ip, port) — connects to a mail
+// service and returns every registered username + email on that
+// machine. Doesn't crack anything itself — turns ar/autoroot/chainsaw
+// from guessing both username AND password blind into guessing just
+// the password against a confirmed-real account list.
+SmtpList = function(ip, port)
+    if not gco.crypto then
+        print(c.yellow + "<b>smtplist: crypto.so not loaded" + c.ennd)
+        return
+    end if
+    if ip == "pt" then ip = publicTarget
+    if ip == "lt" then ip = localTarget
+    if not is_valid_ip(ip) then
+        print(c.yellow + "<b>smtplist: invalid ip" + c.ennd)
+        return
+    end if
+    portInt = port.to_int
+    if typeof(portInt) != "number" then
+        print(c.yellow + "<b>smtplist: invalid port" + c.ennd)
+        return
+    end if
+    print(c.orange + "Querying mail service on " + ip + ":" + port + "..." + c.ennd)
+    users = gco.crypto.smtp_user_list(ip, portInt)
+    if not users or users.len == 0 then
+        print(c.yellow + "<b>smtplist: no users found (wrong port, no mail service, or connection refused)" + c.ennd)
+        globals.pipeFailed = true
+        return
+    end if
+    print(c.cyan + "<b>" + users.len + " user(s) found:" + c.ennd)
+    names = []
+    for u in users
+        print(c.gold + "  " + u + c.ennd)
+        names.push("" + u)
+    end for
+    globals.pipeResult = names.join(",")
+end function
+
+// smtplist <ip> <port>  — e.g. smtplist pt 25
+CmdSmtplist = function(inp)
+    if inp.len < 3 then
+        print("<b>Usage: smtplist <ip> <port>")
+        print(c.grey + "  e.g.  smtplist pt 25" + c.ennd)
+        print(c.grey + "  lists every user on a mail service — feed into ar/autoroot/chainsaw as a confirmed username list instead of guessing blind" + c.ennd)
+        return
+    end if
+    SmtpList(inp[1], inp[2])
+end function
+CommandTable["smtplist"] = @CmdSmtplist
