@@ -27,15 +27,13 @@ if not gco.crypto then exit(c.yellow + "<b>phantom: crypto.so missing" + c.ennd)
 CommandTable = {}
 
 import_code("/root/ai/pt/macro.src")
-import_code("/root/ai/pt/core.src")
-import_code("/root/ai/pt/recon.src")
 import_code("/root/ai/pt/hack.src")
 import_code("/root/ai/pt/ops.src")
 import_code("/root/ai/pt/remote.src")
 import_code("/root/ai/pt/chainsaw.src")
 import_code("/root/ai/pt/stack.src")
-import_code("/root/ai/pt/vars.src")
-import_code("/root/ai/pt/misc.src")
+
+
 
 myShell      = get_shell
 myComp       = myShell.host_computer
@@ -58,7 +56,6 @@ end if
 // auto-load exploit db if it exists
 globals.edb = []
 
-dbFile = myComp.File(currentPath + "/db.txt")
     dbFile = myComp.File(currentPath + "/db.txt")
 	if not dbFile then
 		myComp.touch(currentPath, "db.txt")
@@ -173,6 +170,11 @@ foreachItems = []
 macroQueue   = []
 macroName    = ""
 macroArgList = []
+// mac trace <name> — when true, the macro line-dispatch loop below
+// prints each raw compiled line right before running it (see the
+// macroQueue branch further down, and CheckMacroComplete which clears
+// this back to false once the macro finishes)
+macroTrace   = false
 stageQueue   = []
 stackforItems  = []
 stackforBody   = ""
@@ -316,6 +318,8 @@ while true
         line = macroQueue[0]
         macroQueue = macroQueue[1:]
 
+        if macroTrace then print(c.teal + "  trace: " + line + c.ennd)
+
         line = line.split(char(9)).join(" ")
         parts = []
         for p in line.split(" ")
@@ -349,6 +353,11 @@ while true
             continue
         else if line == "__forobj__" then
             HandleForObjLine()
+            continue
+        else if line == "__forend__" then
+            // pure no-op during normal execution — exists only as a
+            // failure-recovery anchor for HandleMacroPipeFail on a
+            // for-loop's last item (see HandleForLine, macro.src)
             continue
         else if line == "__funcend__" then
             HandleFuncend()
