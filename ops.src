@@ -17,17 +17,6 @@ CmdTree = function(inp)
 end function
 CommandTable["tree"] = @CmdTree
 
-CmdRtree = function(inp)
-    if not object then
-        print(c.yellow + "<b>rtree: not holding remote object" + c.ennd)
-    else
-        path = remotePath
-        if inp.len == 2 then path = inp[1]
-        Tree(path, object, false, null)
-    end if
-end function
-CommandTable["rtree"] = @CmdRtree
-
 CmdLs = function(inp)
     Ls(inp, myPath, myComp, true)
 end function
@@ -394,14 +383,28 @@ CmdScan = function(inp)
     else if inp.len == 4 then
         Scan(inp[1], inp[2], myComp, inp[3], null)
     else if inp.len == 6 and inp[4] == "-lib" then
-        ScanRemoteLib(inp[1], inp[2], inp[3], inp[5])
+        // no mem/val given — ScanRemoteLib used to default these to
+        // "0x1F000FB5"/"length" (init.so's specific known-weak pair),
+        // silently trying that against WHATEVER lib you named, which
+        // only ever worked by coincidence. inp[1]/inp[2] (ip/port) were
+        // also never actually used inside ScanRemoteLib — it always
+        // operated on the currently held `object` regardless. LibScan
+        // (scanlib's own implementation) already does exactly what
+        // this needs — checks db.txt-known exploits for the named
+        // lib+version first, falls back to a real scan/decode if none
+        // exist — so delegate to that instead of duplicating it here.
+        LibScan(inp[5], inp[3], false)
     else if inp.len == 8 and inp[4] == "-lib" then
+        // explicit mem/val given — a deliberate manual override (e.g.
+        // you already know the working pair from a scanlib/grab run
+        // elsewhere), not something that needs auto-detection
         ScanRemoteLib(inp[1], inp[2], inp[3], inp[5], inp[6], inp[7])
     else
         print("<b>Usage: scan [ip] [port]")
         print(c.grey + "  LAN IPs are detected automatically when holding a shell" + c.ennd)
         print(c.grey + "  scan -l [lib]              scan local lib" + c.ennd)
-        print(c.grey + "  scan [ip] [port] [lanip] -lib [lib.so]  remote lib scan" + c.ennd)
+        print(c.grey + "  scan [ip] [port] [lanip] -lib [lib.so]  remote lib scan — checks db.txt-known exploits first, full scan/decode fallback" + c.ennd)
+        print(c.grey + "  scan [ip] [port] [lanip] -lib [lib.so] [mem] [val]  same, but force this exact mem/val instead of auto-detecting" + c.ennd)
     end if
 end function
 CommandTable["scan"] = @CmdScan
@@ -503,15 +506,6 @@ CmdRemoteBinary = function(inp)
     end if
 end function
 
-CmdRls = function(inp)
-    if not object then
-        print(c.yellow + "<b>rls: not holding remote object" + c.ennd)
-    else
-        Ls(inp, remotePath, object, false)
-    end if
-end function
-CommandTable["rls"] = @CmdRls
-
 CmdAr = function(inp)
     if inp.indexOf("-l") != null then
         userArg = null
@@ -600,20 +594,7 @@ CmdAutoroot = function(inp)
                             print(c.gold + "      password: " + gcoCS.chainsaw.password + c.ennd)
 
                             print(c.orange + "  planting weaklib..." + c.ennd)
-                            srcDir = "/root/InsecureLibs"
-                            libName = "libhttp.so"
-                            dest = "/lib"
-                            srcPath = srcDir + "/" + libName
-                            if myComp.File(srcPath) then
-                                result = myShell.scp(srcPath, dest, globals.object)
-                                if typeof(result) == "string" and result != "" then
-                                    print(c.yellow + "  plant failed: " + result + c.ennd)
-                                else
-                                    print(c.lime + "  [+] planted " + libName + c.ennd)
-                                end if
-                            else
-                                print(c.yellow + "  weaklib.so not found" + c.ennd)
-                            end if
+                            PlantToObject(["libhttp.so"], "/lib")
 
                             rooted = rooted + 1
                         else
@@ -672,25 +653,8 @@ CmdAutoroot = function(inp)
                         print(c.green + "<b>[+] ROOTED via ChainSaw!" + c.ennd)
                         print(c.gold + "  password: " + gcoCS.chainsaw.password + c.ennd)
 
-                        libName = "libhttp.so"
-                        if not libName then libName = "init.so"
-
                         print(c.orange + "  planting weaklib..." + c.ennd)
-                        srcDir = "/root/InsecureLibs"
-
-                        if not libName then libName == "init.so"
-                        dest = "/lib"
-                        srcPath = "/root/InsecureLibs/" + libName
-                        if myComp.File(srcPath) then
-                            result = myShell.scp(srcPath, dest, globals.object)
-                            if typeof(result) == "string" and result != "" then
-                                print(c.yellow + "  plant failed: " + result + c.ennd)
-                            else
-                                print(c.lime + "  [+] planted " + libName + c.ennd)
-                            end if
-                        else
-                            print(c.yellow + "  weaklib.so not found" + c.ennd)
-                        end if
+                        PlantToObject(["libhttp.so"], "/lib")
                     else
                         print(c.yellow + "  ChainSaw failed" + c.ennd)
                     end if
@@ -702,227 +666,6 @@ CmdAutoroot = function(inp)
     end if
 end function
 CommandTable["autoroot"] = @CmdAutoroot
-
-CmdRcd = function(inp)
-    if not object then
-        print(c.yellow + "<b>rcd: not holding remote object" + c.ennd)
-    else if inp.len == 1 then
-        globals.remotePath = "/"
-    else if inp[1] == ".." then
-        comp = object.host_computer
-        if typeof(object) != "shell" then comp = object
-        f = comp.File(remotePath).parent
-        if f then globals.remotePath = f.path
-    else
-        f = GetFile(inp[1], object, false)
-        if f and f.is_folder then
-            globals.remotePath = f.path
-        else
-            print(c.yellow + "<b>rcd: not found" + c.ennd)
-        end if
-    end if
-end function
-CommandTable["rcd"] = @CmdRcd
-
-CmdRcat = function(inp)
-    if not object then
-        print(c.yellow + "<b>rcat: not holding remote object" + c.ennd)
-    else if inp.len >= 2 then
-        Cat(inp[1], object, false)
-    else
-        print("<b>Usage: rcat [file]")
-    end if
-end function
-CommandTable["rcat"] = @CmdRcat
-
-CmdRcp = function(inp)
-    if not object then
-        print(c.yellow + "<b>rcp: not holding remote object" + c.ennd)
-    else if inp.len == 3 then
-        Cp(inp[1], inp[2], object, false)
-    else
-        print("<b>Usage: rcp [src] [dst]")
-    end if
-end function
-CommandTable["rcp"] = @CmdRcp
-
-CmdRmv = function(inp)
-    if not object then
-        print(c.yellow + "<b>rmv: not holding remote object" + c.ennd)
-    else if inp.len == 3 then
-        Mv(inp[1], inp[2], object, false)
-    else
-        print("<b>Usage: rmv [src] [dst]")
-    end if
-end function
-CommandTable["rmv"] = @CmdRmv
-
-CmdRrm = function(inp)
-    if not object then
-        print(c.yellow + "<b>rrm: not holding remote object" + c.ennd)
-    else if inp.len == 2 then
-        Rm(inp[1], false, object, false)
-    else if inp.len == 3 and inp[1] == "-r" then
-        Rm(inp[2], true, object, false)
-    else
-        print("<b>Usage: rrm [opt:-r] [path]")
-    end if
-end function
-CommandTable["rrm"] = @CmdRrm
-
-CmdRmkdir = function(inp)
-    if not object then
-        print(c.yellow + "<b>rmkdir: not holding remote object" + c.ennd)
-    else if inp.len == 2 then
-        Mkdir(inp[1], object, false)
-    else
-        print("<b>Usage: rmkdir [path]")
-    end if
-end function
-CommandTable["rmkdir"] = @CmdRmkdir
-
-CmdRtouch = function(inp)
-    if not object then
-        print(c.yellow + "<b>rtouch: not holding remote object" + c.ennd)
-    else if inp.len == 2 then
-        Touch(inp[1], object, false)
-    else
-        print("<b>Usage: rtouch [path/file]")
-    end if
-end function
-CommandTable["rtouch"] = @CmdRtouch
-
-CmdRchmod = function(inp)
-    if not object then
-        print(c.yellow + "<b>rchmod: not holding remote object" + c.ennd)
-    else if inp.len == 3 then
-        Chmod(inp[1], inp[2], false, object, false)
-    else if inp.len == 4 and inp[1] == "-R" then
-        Chmod(inp[2], inp[3], true, object, false)
-    else
-        print("<b>Usage: rchmod [opt:-R] [perms] [path]")
-    end if
-end function
-CommandTable["rchmod"] = @CmdRchmod
-
-CmdRchown = function(inp)
-    if not object then
-        print(c.yellow + "<b>rchown: not holding remote object" + c.ennd)
-    else if inp.len == 3 then
-        Chown(inp[1], inp[2], false, object, false)
-    else if inp.len == 4 and inp[1] == "-R" then
-        Chown(inp[2], inp[3], true, object, false)
-    else
-        print("<b>Usage: rchown [opt:-R] [owner] [path]")
-    end if
-end function
-CommandTable["rchown"] = @CmdRchown
-
-CmdRchgrp = function(inp)
-    if not object then
-        print(c.yellow + "<b>rchgrp: not holding remote object" + c.ennd)
-    else if inp.len == 3 then
-        Chgrp(inp[1], inp[2], false, object, false)
-    else if inp.len == 4 and inp[1] == "-R" then
-        Chgrp(inp[2], inp[3], true, object, false)
-    else
-        print("<b>Usage: rchgrp [opt:-R] [group] [path]")
-    end if
-end function
-CommandTable["rchgrp"] = @CmdRchgrp
-
-CmdRsearch = function(inp)
-    if not object then
-        print(c.yellow + "<b>rsearch: not holding remote object" + c.ennd)
-    else if inp.len == 1 then
-        Search("", object)
-    else
-        Search(inp[1], object)
-    end if
-end function
-CommandTable["rsearch"] = @CmdRsearch
-
-CmdRps = function(inp)
-    if not object then
-        print(c.yellow + "<b>rps: not holding remote object" + c.ennd)
-    else if typeof(object) == "shell" then
-        print(object.host_computer.show_procs)
-    else
-        print(object.show_procs)
-    end if
-end function
-CommandTable["rps"] = @CmdRps
-
-CmdRkill = function(inp)
-    if not object then
-        print(c.yellow + "<b>rkill: not holding remote object" + c.ennd)
-    else if inp.len >= 2 then
-        Kill(inp[1], object)
-    else
-        print("<b>Usage: rkill [PID]")
-    end if
-end function
-CommandTable["rkill"] = @CmdRkill
-
-CmdRpasswd = function(inp)
-    if not object then
-        print(c.yellow + "<b>rpasswd: not holding remote object" + c.ennd)
-    else if inp.len == 2 then
-        Passwd(inp[1], object)
-    else
-        print("<b>Usage: rpasswd [user]")
-    end if
-end function
-CommandTable["rpasswd"] = @CmdRpasswd
-
-CmdRuseradd = function(inp)
-    if not object then
-        print(c.yellow + "<b>ruseradd: not holding remote object" + c.ennd)
-    else if inp.len == 2 then
-        UserAdd(inp[1], object)
-    else
-        print("<b>Usage: ruseradd [user]")
-    end if
-end function
-CommandTable["ruseradd"] = @CmdRuseradd
-
-CmdRuserdel = function(inp)
-    if not object then
-        print(c.yellow + "<b>ruserdel: not holding remote object" + c.ennd)
-    else if inp.len == 2 then
-        UserDel(inp[1], false, object)
-    else if inp.len == 3 and inp[1] == "-r" then
-        UserDel(inp[2], true, object)
-    else
-        print("<b>Usage: ruserdel [opt:-r] [user]")
-    end if
-end function
-CommandTable["ruserdel"] = @CmdRuserdel
-
-CmdRcorlog = function(inp)
-    if not object then
-        print(c.yellow + "<b>rcorlog: not holding remote object" + c.ennd)
-    else
-        CorruptLog(object)
-    end if
-end function
-CommandTable["rcorlog"] = @CmdRcorlog
-
-CmdRterminal = function(inp)
-    Rterminal(object)
-end function
-CommandTable["rterminal"] = @CmdRterminal
-
-CmdRdecipher = function(inp)
-    if not object then
-        print(c.yellow + "<b>rdecipher: not holding remote object" + c.ennd)
-    else if inp.len == 3 then
-        Decipher(inp[1], inp[2], object)
-    else
-        print("<b>Usage: rdecipher [-h user:hash] [-f /path/file]")
-    end if
-end function
-CommandTable["rdecipher"] = @CmdRdecipher
 
 CmdLanenum = function(inp)
     localMode = inp.indexOf("-l") != null
@@ -938,57 +681,6 @@ CmdLanenum = function(inp)
     LanEnum(sv, localMode)
 end function
 CommandTable["lanenum"] = @CmdLanenum
-
-CmdRgrep = function(inp)
-    if inp.len < 2 then
-        print("<b>Usage: rgrep <pattern> [path] [@var]")
-    else if not object then
-        print(c.yellow + "<b>rgrep: not holding remote object" + c.ennd)
-    else
-        path = "/"
-        storeKey = null
-        if inp.len >= 3 and inp[-1][0:1] == "@" then
-            storeKey = inp[-1][1:]
-            path = inp[2:-1].join(" ")
-        else if inp.len >= 3 then
-            path = inp[2]
-        end if
-        print(c.orange + "Searching for '" + inp[1] + "' in " + path + " ..." + c.ennd)
-        matchedLines = RGrep(inp[1], path, object)
-        if matchedLines == null or matchedLines.len == 0 then
-            print(c.yellow + "<b>rgrep: no matches" + c.ennd)
-            globals.pipeFailed = true
-        else
-            print(c.cyan + "rgrep: " + matchedLines.len + " match(es)" + c.ennd)
-            joined = matchedLines.join(",")
-            globals.pipeResult = joined
-            if storeKey != null then
-                gco = get_custom_object
-                if not gco.hasIndex("clips") then gco.clips = {}
-                gco.clips[storeKey] = joined
-                pipeVars[storeKey] = joined
-                print(c.lime + "  @" + storeKey + " = " + joined + c.ennd)
-            end if
-        end if
-    end if
-end function
-CommandTable["rgrep"] = @CmdRgrep
-
-CmdRfind = function(inp)
-    if inp.len < 2 then
-        print("<b>Usage: rfind <pattern> [path]")
-    else if not object then
-        print(c.yellow + "<b>rfind: not holding remote object" + c.ennd)
-    else
-        path = "/"
-        if inp.len >= 3 then path = inp[2]
-        print(c.orange + "Finding '" + inp[1] + "' in " + path + " ..." + c.ennd)
-        total = RFind(inp[1], path, object)
-        print(c.cyan + "rfind: " + total + " result(s)" + c.ennd)
-        if total == 0 then globals.pipeFailed = true
-    end if
-end function
-CommandTable["rfind"] = @CmdRfind
 
 CmdStackgrep = function(inp)
     if inp.len < 2 then
@@ -1633,7 +1325,7 @@ end function
 // when targetIp is directly on that machine's own LAN. netmap/lanenum
 // can see much deeper because they use metadata-only lookups — for a
 // target N hops away, this walks that same path (FindRouterPath, in
-// recon.src) and pivots through each intermediate router for real
+// remote.src) and pivots through each intermediate router for real
 // (net_use + overflow, one hop at a time, reusing GrabLanBounce) until
 // object is actually standing on the router that fronts targetIp.
 // Returns true once in position (including "already were"), false if
@@ -1853,9 +1545,12 @@ ScanLanBounce = function(lanIp, port, libName, useLocal=false)
             EdbAdd(gco.slbLibName, gco.slbLibVer, mem2, val2, outcome2, userForEntry)
         end if
     end for
-    if gco.hasIndex("slbObj") and gco.slbObj then
-        print(c.lime + "  [+] " + gco.slbObjType + " obtained via " + gco.slbMem + " " + gco.slbVal + c.ennd)
-    end if
+    // no summary print here — ScanLan (hack.src) already prints this
+    // exact "obtained via" line itself once it knows whether the object
+    // actually got pushed to the stack (respecting -c/acceptComputer),
+    // and GrabLanBounce has its own separate success message, so a
+    // print here was just a duplicate of one or the other depending on
+    // which caller invoked this
     // store for grab to pick up
     gco.slbReady = true
 end function
@@ -2002,6 +1697,12 @@ Scan = function(ip, port, comp, inject, libName)
             return
         end if
     end if
+    // known dead (patched / zero exploitable vulnerabilities from a prior
+    // scan) — same check ScanLan already does, just never wired up here
+    if IsDeadLib(metalib.lib_name, metalib.version) then
+        print(c.grey + "  [known dead — no exploitable vulnerabilities, see deadlibs.txt]" + c.ennd)
+        return
+    end if
     // check db.txt for known exploits for this lib - skip scanning if found
     dbFile = myComp.File(currentPath + "/db.txt")
 	if not dbFile then
@@ -2091,14 +1792,27 @@ Scan = function(ip, port, comp, inject, libName)
                 print(c.orange + "shells: " + shells + "  files: " + files + "  computers: " + comps + c.ennd)
                 return
             end if
-            // no results from edb - fall through to full scan
-            print(c.grey + "  edb exploits failed - running full scan..." + c.ennd)
+            // known entries didn't pan out on THIS target — stop here
+            // instead of auto-escalating to a full scan. A genuinely
+            // dead lib+version still gets caught and written to
+            // deadlibs.txt normally, via the is_patched/no-memList
+            // checks below, on whichever scan reaches this lib+version
+            // before db.txt has any exploit info recorded for it yet.
+            print(c.yellow + "<b>scan: known exploits didn't work on this target" + c.ennd)
+            globals.pipeFailed = true
+            return
         end if
     end if
 
+    if metalib.is_patched then
+        print(c.grey + "  [patched - no vulnerabilities]" + c.ennd)
+        DeadLibAdd(metalib.lib_name, metalib.version)
+        return
+    end if
     memList = metaxploit.scan(metalib)
     if not memList then
         print(c.yellow + "<b>scan: no vulnerabilities found" + c.ennd)
+        DeadLibAdd(metalib.lib_name, metalib.version)
         return
     end if
     shells = 0
@@ -2667,8 +2381,14 @@ GetRoot = function(path, password, obj)
 end function
 
 // -- SCP ----------------------------------------------------------
+// scp -u [src] [dst]  — upload from this machine to the held remote
+// object. object.scp() only exists on a shell type (confirmed against
+// GreyScript's own docs — Computer has no .scp()), so a held computer
+// object instead gets a manual read/touch/write copy.
+// scp -d [src] [dst]  — download from the held remote shell to this
+// machine (needs a shell specifically, same .scp()-is-shell-only
+// reason — a bare computer object can't be the download source).
 Scp = function(flag, orig, dest)
-
     if not orig or orig == "" then
         print(c.yellow + "<b>scp: missing source path" + c.ennd)
         return
@@ -2677,44 +2397,47 @@ Scp = function(flag, orig, dest)
         print(c.yellow + "<b>scp: missing destination path" + c.ennd)
         return
     end if
+    if dest[-1:] == "/" then dest = dest[:-1]
+    fname = orig.split("/")[-1]
+
     if flag == "-u" then
-		if typeof(object) == "shell" then
-        		result = myShell.scp(orig, dest, object)
-			if typeof(result) == "string" and result != "" then
-				print(c.yellow + char(9) + "<b>scp: " + result)
-			else	
-			if typeof(object) == "computer" then
-			src = myComp.File(orig)
-			if not src or src == null or src == "" then
-				print(c.yellow + char(9) + "scp: Src File Not Found")
-				return
-			end if
-		
-		content = src.get_content
-		fname = orig.split("/")[-1]
-		if dest[-1:] == "/" then dest == dest[:-1]
-		object.touch(dest, fname)
-		dfile = object.File(dest + "/" + fname)
-		if not dfile or dfile == null then
-			print(c.yellow + char(9) + "<b>[i] Could not Create File")
-			return
-		end if
-		res = dfile.set_content(content)
-		if res != null or res != "" then
-			 print(c.green + char(9) + orig + " --> " + dest + "/" + fname)
-			return
-		end if
-		
+        if typeof(object) == "shell" then
+            result = myShell.scp(orig, dest, object)
+            if typeof(result) == "string" and result != "" then
+                print(c.yellow + "<b>scp: " + result + c.ennd)
+            else
+                print(c.green + "  " + orig + " -> " + dest + "/" + fname + c.ennd)
+            end if
+        else if typeof(object) == "computer" then
+            src = myComp.File(orig)
+            if not src then
+                print(c.yellow + "<b>scp: source file not found: " + orig + c.ennd)
+                return
+            end if
+            content = src.get_content
+            object.touch(dest, fname)
+            dfile = object.File(dest + "/" + fname)
+            if not dfile then
+                print(c.yellow + "<b>scp: could not create destination file" + c.ennd)
+                return
+            end if
+            dfile.set_content(content)
+            print(c.green + "  " + orig + " -> " + dest + "/" + fname + c.ennd)
+        else
+            print(c.yellow + "<b>scp: not holding a remote shell/computer" + c.ennd)
+        end if
     else if flag == "-d" then
-        fname = orig.split("/")[-1]
-        if dest[-1:] == "/" then dest = dest[:-1]
+        if typeof(object) != "shell" then
+            print(c.yellow + "<b>scp: -d needs a held remote shell" + c.ennd)
+            return
+        end if
         result = object.scp(orig, dest, myShell)
-        if result then
+        if typeof(result) == "string" and result != "" then
+            print(c.yellow + "<b>scp: " + result + c.ennd)
+        else
             print(c.green + "  " + fname + " -> " + dest + "/" + fname + c.ennd)
-        	return
-		end if
+        end if
     else
-		if flag == null or flag == "" then
         print(c.yellow + "<b>scp: unknown flag " + flag + "  (use -u or -d)" + c.ennd)
     end if
 end function
