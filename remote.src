@@ -215,6 +215,16 @@ Propagate = function(rshellMode)
         if cr then me.scp(currentPath + "/crypto.so", remoteFolder, comp)
     end if
 
+    // hand whatever lib/mx you're currently carrying to the nested
+    // phantom instance about to launch — see phantom.src's startup for
+    // the read side. gco.local, not gco.claimLib/claimMx (that pair
+    // stays a manual, explicit leave/claim for handing things to a
+    // DIFFERENT already-running session, not this auto-carry-forward
+    // on jump).
+    if globals.activeLib or globals.activeMx then
+        gco.local = {"activeLib": globals.activeLib, "activeMx": globals.activeMx}
+    end if
+
     if rshellMode then
         print(c.cyan + "Launching phantom --rshell on target..." + c.ennd)
         comp.launch(remoteBin, "--rshell 1222")
@@ -231,6 +241,23 @@ Propagate = function(rshellMode)
     else
         print(c.cyan + "Launching phantom on target..." + c.ennd)
         comp.launch(remoteBin)
+        // comp.launch() is synchronous — by the time we're back here the
+        // nested session has already exited and (per macro.src's exit/
+        // quit) written whatever it was holding back into gco.local.
+        // Pick it back up so a lib claimed/used over there comes home
+        // with you instead of vanishing when the nested instance closes.
+        if gco.hasIndex("local") and gco.local then
+            backLoc = gco.local
+            if backLoc.hasIndex("activeLib") and backLoc.activeLib then
+                globals.activeLib = backLoc.activeLib
+                print(c.lime + "<b>brought back activeLib: " + activeLib.lib_name + " " + activeLib.version + c.ennd)
+            end if
+            if backLoc.hasIndex("activeMx") and backLoc.activeMx then
+                globals.activeMx = backLoc.activeMx
+                print(c.lime + "<b>brought back activeMx" + c.ennd)
+            end if
+            gco.local = null
+        end if
         print(c.green + "<b>propagate: phantom deployed to " + rcomp.public_ip + c.ennd)
     end if
 end function
@@ -1152,3 +1179,300 @@ HackLan = function(lanIp)
     end if
 end function
 
+
+// ================================================================
+//  Remote object filesystem/process commands (moved from ops.src to
+//  ease that file's Grey Hack 160k-char cap, 2026-07-10)
+// ================================================================
+
+CmdRtree = function(inp)
+    if not object then
+        print(c.yellow + "<b>rtree: not holding remote object" + c.ennd)
+    else
+        path = remotePath
+        if inp.len == 2 then path = inp[1]
+        Tree(path, object, false, null)
+    end if
+end function
+CommandTable["rtree"] = @CmdRtree
+
+CmdRls = function(inp)
+    if not object then
+        print(c.yellow + "<b>rls: not holding remote object" + c.ennd)
+    else
+        Ls(inp, remotePath, object, false)
+    end if
+end function
+CommandTable["rls"] = @CmdRls
+
+CmdRcd = function(inp)
+    if not object then
+        print(c.yellow + "<b>rcd: not holding remote object" + c.ennd)
+    else if inp.len == 1 then
+        globals.remotePath = "/"
+    else if inp[1] == ".." then
+        comp = object.host_computer
+        if typeof(object) != "shell" then comp = object
+        f = comp.File(remotePath).parent
+        if f then globals.remotePath = f.path
+    else
+        f = GetFile(inp[1], object, false)
+        if f and f.is_folder then
+            globals.remotePath = f.path
+        else
+            print(c.yellow + "<b>rcd: not found" + c.ennd)
+        end if
+    end if
+end function
+CommandTable["rcd"] = @CmdRcd
+
+CmdRcat = function(inp)
+    if not object then
+        print(c.yellow + "<b>rcat: not holding remote object" + c.ennd)
+    else if inp.len >= 2 then
+        Cat(inp[1], object, false)
+    else
+        print("<b>Usage: rcat [file]")
+    end if
+end function
+CommandTable["rcat"] = @CmdRcat
+
+CmdRcp = function(inp)
+    if not object then
+        print(c.yellow + "<b>rcp: not holding remote object" + c.ennd)
+    else if inp.len == 3 then
+        Cp(inp[1], inp[2], object, false)
+    else
+        print("<b>Usage: rcp [src] [dst]")
+    end if
+end function
+CommandTable["rcp"] = @CmdRcp
+
+CmdRmv = function(inp)
+    if not object then
+        print(c.yellow + "<b>rmv: not holding remote object" + c.ennd)
+    else if inp.len == 3 then
+        Mv(inp[1], inp[2], object, false)
+    else
+        print("<b>Usage: rmv [src] [dst]")
+    end if
+end function
+CommandTable["rmv"] = @CmdRmv
+
+CmdRrm = function(inp)
+    if not object then
+        print(c.yellow + "<b>rrm: not holding remote object" + c.ennd)
+    else if inp.len == 2 then
+        Rm(inp[1], false, object, false)
+    else if inp.len == 3 and inp[1] == "-r" then
+        Rm(inp[2], true, object, false)
+    else
+        print("<b>Usage: rrm [opt:-r] [path]")
+    end if
+end function
+CommandTable["rrm"] = @CmdRrm
+
+CmdRmkdir = function(inp)
+    if not object then
+        print(c.yellow + "<b>rmkdir: not holding remote object" + c.ennd)
+    else if inp.len == 2 then
+        Mkdir(inp[1], object, false)
+    else
+        print("<b>Usage: rmkdir [path]")
+    end if
+end function
+CommandTable["rmkdir"] = @CmdRmkdir
+
+CmdRtouch = function(inp)
+    if not object then
+        print(c.yellow + "<b>rtouch: not holding remote object" + c.ennd)
+    else if inp.len == 2 then
+        Touch(inp[1], object, false)
+    else
+        print("<b>Usage: rtouch [path/file]")
+    end if
+end function
+CommandTable["rtouch"] = @CmdRtouch
+
+CmdRchmod = function(inp)
+    if not object then
+        print(c.yellow + "<b>rchmod: not holding remote object" + c.ennd)
+    else if inp.len == 3 then
+        Chmod(inp[1], inp[2], false, object, false)
+    else if inp.len == 4 and inp[1] == "-R" then
+        Chmod(inp[2], inp[3], true, object, false)
+    else
+        print("<b>Usage: rchmod [opt:-R] [perms] [path]")
+    end if
+end function
+CommandTable["rchmod"] = @CmdRchmod
+
+CmdRchown = function(inp)
+    if not object then
+        print(c.yellow + "<b>rchown: not holding remote object" + c.ennd)
+    else if inp.len == 3 then
+        Chown(inp[1], inp[2], false, object, false)
+    else if inp.len == 4 and inp[1] == "-R" then
+        Chown(inp[2], inp[3], true, object, false)
+    else
+        print("<b>Usage: rchown [opt:-R] [owner] [path]")
+    end if
+end function
+CommandTable["rchown"] = @CmdRchown
+
+CmdRchgrp = function(inp)
+    if not object then
+        print(c.yellow + "<b>rchgrp: not holding remote object" + c.ennd)
+    else if inp.len == 3 then
+        Chgrp(inp[1], inp[2], false, object, false)
+    else if inp.len == 4 and inp[1] == "-R" then
+        Chgrp(inp[2], inp[3], true, object, false)
+    else
+        print("<b>Usage: rchgrp [opt:-R] [group] [path]")
+    end if
+end function
+CommandTable["rchgrp"] = @CmdRchgrp
+
+CmdRsearch = function(inp)
+    if not object then
+        print(c.yellow + "<b>rsearch: not holding remote object" + c.ennd)
+    else if inp.len == 1 then
+        Search("", object)
+    else
+        Search(inp[1], object)
+    end if
+end function
+CommandTable["rsearch"] = @CmdRsearch
+
+CmdRps = function(inp)
+    if not object then
+        print(c.yellow + "<b>rps: not holding remote object" + c.ennd)
+    else if typeof(object) == "shell" then
+        print(object.host_computer.show_procs)
+    else
+        print(object.show_procs)
+    end if
+end function
+CommandTable["rps"] = @CmdRps
+
+CmdRkill = function(inp)
+    if not object then
+        print(c.yellow + "<b>rkill: not holding remote object" + c.ennd)
+    else if inp.len >= 2 then
+        Kill(inp[1], object)
+    else
+        print("<b>Usage: rkill [PID]")
+    end if
+end function
+CommandTable["rkill"] = @CmdRkill
+
+CmdRpasswd = function(inp)
+    if not object then
+        print(c.yellow + "<b>rpasswd: not holding remote object" + c.ennd)
+    else if inp.len == 2 then
+        Passwd(inp[1], object)
+    else
+        print("<b>Usage: rpasswd [user]")
+    end if
+end function
+CommandTable["rpasswd"] = @CmdRpasswd
+
+CmdRuseradd = function(inp)
+    if not object then
+        print(c.yellow + "<b>ruseradd: not holding remote object" + c.ennd)
+    else if inp.len == 2 then
+        UserAdd(inp[1], object)
+    else
+        print("<b>Usage: ruseradd [user]")
+    end if
+end function
+CommandTable["ruseradd"] = @CmdRuseradd
+
+CmdRuserdel = function(inp)
+    if not object then
+        print(c.yellow + "<b>ruserdel: not holding remote object" + c.ennd)
+    else if inp.len == 2 then
+        UserDel(inp[1], false, object)
+    else if inp.len == 3 and inp[1] == "-r" then
+        UserDel(inp[2], true, object)
+    else
+        print("<b>Usage: ruserdel [opt:-r] [user]")
+    end if
+end function
+CommandTable["ruserdel"] = @CmdRuserdel
+
+CmdRcorlog = function(inp)
+    if not object then
+        print(c.yellow + "<b>rcorlog: not holding remote object" + c.ennd)
+    else
+        CorruptLog(object)
+    end if
+end function
+CommandTable["rcorlog"] = @CmdRcorlog
+
+CmdRterminal = function(inp)
+    Rterminal(object)
+end function
+CommandTable["rterminal"] = @CmdRterminal
+
+CmdRdecipher = function(inp)
+    if not object then
+        print(c.yellow + "<b>rdecipher: not holding remote object" + c.ennd)
+    else if inp.len == 3 then
+        Decipher(inp[1], inp[2], object)
+    else
+        print("<b>Usage: rdecipher [-h user:hash] [-f /path/file]")
+    end if
+end function
+CommandTable["rdecipher"] = @CmdRdecipher
+
+CmdRgrep = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: rgrep <pattern> [path] [@var]")
+    else if not object then
+        print(c.yellow + "<b>rgrep: not holding remote object" + c.ennd)
+    else
+        path = "/"
+        storeKey = null
+        if inp.len >= 3 and inp[-1][0:1] == "@" then
+            storeKey = inp[-1][1:]
+            path = inp[2:-1].join(" ")
+        else if inp.len >= 3 then
+            path = inp[2]
+        end if
+        print(c.orange + "Searching for '" + inp[1] + "' in " + path + " ..." + c.ennd)
+        matchedLines = RGrep(inp[1], path, object)
+        if matchedLines == null or matchedLines.len == 0 then
+            print(c.yellow + "<b>rgrep: no matches" + c.ennd)
+            globals.pipeFailed = true
+        else
+            print(c.cyan + "rgrep: " + matchedLines.len + " match(es)" + c.ennd)
+            joined = matchedLines.join(",")
+            globals.pipeResult = joined
+            if storeKey != null then
+                gco = get_custom_object
+                if not gco.hasIndex("clips") then gco.clips = {}
+                gco.clips[storeKey] = joined
+                pipeVars[storeKey] = joined
+                print(c.lime + "  @" + storeKey + " = " + joined + c.ennd)
+            end if
+        end if
+    end if
+end function
+CommandTable["rgrep"] = @CmdRgrep
+
+CmdRfind = function(inp)
+    if inp.len < 2 then
+        print("<b>Usage: rfind <pattern> [path]")
+    else if not object then
+        print(c.yellow + "<b>rfind: not holding remote object" + c.ennd)
+    else
+        path = "/"
+        if inp.len >= 3 then path = inp[2]
+        print(c.orange + "Finding '" + inp[1] + "' in " + path + " ..." + c.ennd)
+        total = RFind(inp[1], path, object)
+        print(c.cyan + "rfind: " + total + " result(s)" + c.ennd)
+        if total == 0 then globals.pipeFailed = true
+    end if
+end function
+CommandTable["rfind"] = @CmdRfind
