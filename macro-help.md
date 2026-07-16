@@ -20,10 +20,13 @@ The `.txt` extension is a convention, not a hard requirement — `mac`/`call` wi
 3. Save it — no build step needed, macros are read and compiled fresh every time you run them.
 
 ```
-mac list           # see every macro currently in /root/ai/mac/
-mac show <name>    # preview a macro's lines without running it
-mac <name> [args]  # run it
+mac list                 # see every macro currently in /root/ai/mac/
+mac show <name>           # preview a macro's lines without running it
+mac <name> [args]         # run it
+mac trace <name> [args]   # run it, printing each compiled line right before it executes
 ```
+
+`mac trace` is for debugging a macro that isn't doing what you expect — it prints the *compiled* line, not just your source text, so you'll see the internal sentinels a `for`/`if`/`while`/etc. actually compiles down to (e.g. `__for__...`) as they run, one at a time. Useful for confirming a loop is iterating the values you think it is, or that a conditional is actually taking the branch you expect.
 
 ## Arguments
 
@@ -42,6 +45,13 @@ mac hunt 80
 ```
 
 If a macro references `$4` but you only passed 3 args, phantom prints a warning and leaves it blank rather than failing silently.
+
+**Piped input becomes `$1`.** `randip | mac hunt` hands the generated ip in as the macro's first arg, without needing an explicit `@clip` round-trip first — same as any other command consuming a pipe. Any args you also type after the macro name shift down to fill `$2`, `$3`, etc.:
+
+```
+randip | mac hunt 80
+// $1 = the piped ip, $2 = "80"
+```
 
 ## Comments
 
@@ -122,6 +132,8 @@ endfor
 ```
 
 `max N` on `while`/`until` caps iterations as a safety net (default cap is effectively unlimited). `break`/`continue` work inside any loop.
+
+**A failed pipe stage inside a loop body skips to the next iteration, not the whole macro.** If a line like `scan @x 80 | grab @x 80` fails partway (e.g. `scan` finds nothing on that particular item), the loop moves on to the next item instead of aborting — same recovery behavior for `for`/`for @x in @objlist`/`while`/`until`/`repeat` alike. This includes a failure on a loop's *last* item — anything you write after `endfor`/`endwhile` still runs, it doesn't get silently dropped just because the final iteration happened to fail.
 
 **Not the same as `foreach`:** `foreach @list | cmd @each` is a separate, prompt-level construct (works outside macros too, straight at the interactive phantom prompt) — it queues one pipeline run per list item, substituting `@each`. The `for ... endfor` block above is macro-only and lets you name the loop variable yourself.
 
