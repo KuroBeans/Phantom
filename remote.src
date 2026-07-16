@@ -8,6 +8,32 @@ CmdTerm = function(inp)
     myShell.launch("/usr/bin/Terminal.exe")
 end function
 CommandTable["term"] = @CmdTerm
+RTerm = function(inp)
+if object == null then
+	return print(c.orange + "Need to be Holding Remote Shell")
+	else
+	object.launch("/usr/bin/Terminal.exe")
+    end if
+end function
+CommandTable["rterm"] = @RTerm
+
+RB = function(inp)
+if object == null then
+    return print(c.orange + "Need to be Holding Remote Shell")
+    else
+    object.launch("/usr/bin/Browser.exe")
+    end if
+end function
+CommandTable["rb"] = @RB
+
+RFile = function(inp)
+if object == null then
+    return print(c.orange + "Need to be Holding Remote Shell")
+    else
+    object.launch("/usr/bin/FileExplorer.exe")
+    end if
+end function
+CommandTable["rfile"] = @RFile
 
 CmdMail = function(inp)
     myShell.launch("/usr/bin/Mail.exe")
@@ -18,7 +44,9 @@ CmdBrowser = function(inp)
     myShell.launch("/usr/bin/Browser.exe")
 end function
 CommandTable["b"] = @CmdBrowser
-
+proxy = function(inp)
+    myShell.launch("/usr/bin/Browser.exe")
+end function
 CmdFileExplorer = function(inp)
     myShell.launch("/usr/bin/FileExplorer.exe")
 end function
@@ -43,32 +71,42 @@ CmdUpdatelib = function(inp)
 end function
 CommandTable["updatelib"] = @CmdUpdatelib
 
+// jump [opt:--rshell] [opt:-b|--bin] [opt:--loadlib name]
+// -b/--bin: upload just the compiled phantom binary (+ the same
+// metaxploit.so/crypto.so/librshell.so companions any jump needs)
+// instead of the whole tp folder — quicker when all you want on the
+// other end is to loadlib/uselib and come back, not the full toolkit.
+// --loadlib name: skip the interactive nested session entirely — the
+// target auto-loads that lib from ITS OWN /lib and exits immediately,
+// bringing it home via the usual gco.local carry. Chain straight into
+// uselib with the existing |> stage syntax, e.g.
+// "jump --loadlib libhttp.so |> uselib -l 10.0.15.5 -c" — one command,
+// no manual typing on the target at all. Implies -b/--bin automatically
+// (grabbing a lib and coming home never needs the whole tp folder) —
+// pass -b explicitly too if you like, it's a no-op either way.
 CmdJump = function(inp)
-    if inp.len == 2 and inp[1] == "--rshell" then
-        Propagate(true)
+    loadLibName = null
+    llIdx = inp.indexOf("--loadlib")
+    if llIdx != null and llIdx + 1 < inp.len then loadLibName = inp[llIdx + 1]
+    binOnly = inp.indexOf("-b") != null or inp.indexOf("--bin") != null or loadLibName != null
+    if inp.indexOf("--rshell") != null then
+        Propagate(true, false, loadLibName)
     else
-        Propagate(false)
+        Propagate(false, binOnly, loadLibName)
     end if
 end function
 CommandTable["jump"] = @CmdJump
 
-c = {}
-c.red    = "<color=#CC2222>"       // crimson
-c.orange = "<color=#D4621A>"       // burnt sienna
-c.yellow = "<color=#D4A017>"       // ochre
-c.green  = "<color=#4A7C59>"       // sage green
-c.cyan   = "<color=#2E86AB>"       // cerulean
-c.blue   = "<color=#1B3A8C>"       // cobalt blue
-c.purple = "<color=#4B0082>"       // indigo
-c.white  = "<color=#FFFFF0>"       // ivory
-c.grey   = "<color=#708090>"       // slate grey
-c.gold   = "<color=#FFB300>"       // amber
-c.lime   = "<color=#4CBB17>"       // viridian green
-c.pink   = "<color=#FF4081>"       // magenta
-c.teal   = "<color=#008080>"       // teal
-c.rust   = "<color=#B7410E>"       // rust
-c.copper = "<color=#B87333>"       // copper
-c.ennd   = "</color>"
+// jumpbin — dedicated bin-only jump, no flag parsing at all. Isolates
+// whether Propagate's binOnly branch itself works, decoupled from
+// whatever's eating -b on `jump -b`.
+CmdJumpBin = function(inp)
+    loadLibName = null
+    if inp.len >= 3 and inp[1] == "--loadlib" then loadLibName = inp[2]
+    Propagate(false, true, loadLibName)
+end function
+CommandTable["jumpbin"] = @CmdJumpBin
+
 
 // ── Utility ──────────────────────────────────────────────────────
 div = function()
@@ -141,7 +179,7 @@ GETPERMS = function(obj)
     print(c.yellow + "<b>read permissions"  + char(10) + format_columns(reads))
 end function
 
-Propagate = function(rshellMode)
+Propagate = function(rshellMode, binOnly, loadLibName=null)
     if typeof(object) != "shell" then
         print(c.yellow + "<b>propagate: not holding remote shell" + c.ennd)
         return
@@ -163,26 +201,38 @@ Propagate = function(rshellMode)
         return
     end if
 
-    if rshellMode then
-        // use lean rsh folder
-        srcFolder = "/root/ai/rsh"
-        rshDir = myComp.File(srcFolder)
-        if not rshDir then srcFolder = currentPath
+    if binOnly then
+        // just the compiled binary, no tp folder at all
+        print(c.orange + "Copying just phantom binary to " + dst + " on target..." + c.ennd)
+        result = me.scp(currentPath + "/phantom", dst, comp)
+        if result and result != 1 then
+            print(c.yellow + "<b>propagate: scp error: " + result + c.ennd)
+            return
+        end if
+        remoteBin = dst + "/phantom"
+        remoteFolder = dst
     else
-        srcFolder = currentPath
-    end if
+        if rshellMode then
+            // use lean rsh folder
+            srcFolder = "/root/ai/rsh"
+            rshDir = myComp.File(srcFolder)
+            if not rshDir then srcFolder = currentPath
+        else
+            srcFolder = currentPath
+        end if
 
-    print(c.orange + "Copying " + srcFolder + " to " + dst + " on target..." + c.ennd)
-    result = me.scp(srcFolder, dst, comp)
-    if result and result != 1 then
-        print(c.yellow + "<b>propagate: scp error: " + result + c.ennd)
-        return
-    end if
+        print(c.orange + "Copying " + srcFolder + " to " + dst + " on target..." + c.ennd)
+        result = me.scp(srcFolder, dst, comp)
+        if result and result != 1 then
+            print(c.yellow + "<b>propagate: scp error: " + result + c.ennd)
+            return
+        end if
 
-    parts = srcFolder.split("/")
-    folderName = parts[parts.len - 1]
-    remoteBin = dst + "/" + folderName + "/phantom"
-    remoteFolder = dst + "/" + folderName
+        parts = srcFolder.split("/")
+        folderName = parts[parts.len - 1]
+        remoteBin = dst + "/" + folderName + "/phantom"
+        remoteFolder = dst + "/" + folderName
+    end if
 
     binFile = rcomp.File(remoteBin)
     if not binFile then
@@ -225,6 +275,12 @@ Propagate = function(rshellMode)
         gco.local = {"activeLib": globals.activeLib, "activeMx": globals.activeMx}
     end if
 
+    // brief pause so the copy-mode print above (which one told you
+    // whether -b was actually picked up) is readable before Title()'s
+    // clear_screen wipes it the instant the nested instance starts
+    print(c.grey + "  remoteBin: " + remoteBin + c.ennd)
+    wait(3)
+
     if rshellMode then
         print(c.cyan + "Launching phantom --rshell on target..." + c.ennd)
         comp.launch(remoteBin, "--rshell 1222")
@@ -239,8 +295,13 @@ Propagate = function(rshellMode)
         print(c.green + "<b>rshell server started on " + rcomp.public_ip + ":1222" + c.ennd)
         print(c.grey + "  run rshell infect on targets to plant callback" + c.ennd)
     else
-        print(c.cyan + "Launching phantom on target..." + c.ennd)
-        comp.launch(remoteBin)
+        if loadLibName then
+            print(c.cyan + "Launching phantom --loadlib " + loadLibName + " on target (headless, no prompt)..." + c.ennd)
+            comp.launch(remoteBin, "--loadlib " + loadLibName)
+        else
+            print(c.cyan + "Launching phantom on target..." + c.ennd)
+            comp.launch(remoteBin)
+        end if
         // comp.launch() is synchronous — by the time we're back here the
         // nested session has already exited and (per macro.src's exit/
         // quit) written whatever it was holding back into gco.local.
@@ -1167,9 +1228,25 @@ HackLan = function(lanIp)
         return
     end if
 
-    parts = gco.hlFound.split("|")
-    print(c.green + "  [+] " + parts[3] + " on " + lanIp + c.ennd)
-    print(c.grey + "  " + parts[0] + "  " + parts[1] + "  " + parts[2] + c.ennd)
+    // confirmed unreliable: GreyScript's split("|") fragments a string
+    // into far more pieces than its real "|" count even when the
+    // delimiter genuinely appears (see sshportals loading above) —
+    // walk it with indexOf("|", pos) + slicing instead, same fix.
+    hp1 = gco.hlFound.indexOf("|")
+    hp2 = null
+    hp3 = null
+    if hp1 != null then hp2 = gco.hlFound.indexOf("|", hp1 + 1)
+    if hp2 != null then hp3 = gco.hlFound.indexOf("|", hp2 + 1)
+    if hp1 == null or hp2 == null or hp3 == null then
+        print(c.yellow + "<b>hacklan: malformed result from target" + c.ennd)
+        return
+    end if
+    hlLibName = gco.hlFound[:hp1]
+    hlMem     = gco.hlFound[hp1+1:hp2]
+    hlVal     = gco.hlFound[hp2+1:hp3]
+    hlType    = gco.hlFound[hp3+1:]
+    print(c.green + "  [+] " + hlType + " on " + lanIp + c.ennd)
+    print(c.grey + "  " + hlLibName + "  " + hlMem + "  " + hlVal + c.ennd)
 
     if gco.hlResult then
         globals.object = gco.hlResult
@@ -1476,3 +1553,214 @@ CmdRfind = function(inp)
     end if
 end function
 CommandTable["rfind"] = @CmdRfind
+
+// -- SSH ----------------------------------------------------------
+// Moved here from ops.src (which was pushing up against the 160,000
+// char cap) — remote.src is the natural home for it anyway, being
+// entirely about connecting to/acting on remote machines.
+Ssh = function(creds, ip, port, comp)
+    parts = creds.split("@")
+    if parts.len < 2 then
+        print(c.yellow + "<b>ssh: usage: ssh [user@pass] [ip] [opt:port]" + c.ennd)
+        return
+    end if
+    user = parts[0]
+    pass = parts[1]
+    portInt = 22
+    if port then portInt = port.to_int
+    if typeof(portInt) != "number" then
+        print(c.yellow + "<b>ssh: invalid port" + c.ennd)
+        return
+    end if
+    print("Connecting to " + ip + ":" + portInt + " ...")
+    shell = comp.connect_service(ip, portInt, user, pass, "ssh")
+    if typeof(shell) == "string" then
+        print(c.yellow + shell + c.ennd)
+        return
+    end if
+    if shell then
+        globals.object = shell
+        globals.remotePath = "/"
+        print(c.cyan + "<b>shell obtained: " + ip + c.ennd)
+    else
+        print(c.yellow + "<b>ssh: connection failed" + c.ennd)
+    end if
+end function
+
+// ── SSH portals — saved logins for YOUR OWN machines ────────────────
+// Persisted to /root/ai/pt/sshportals.txt (name|user|pass|ip|port per
+// line), same pipe-delimited convention db.txt/deadlibs.txt already
+// use. Hardcoded to phantom's canonical install path (same path
+// import_code itself requires — see README) instead of currentPath,
+// since currentPath wasn't reliably landing in pt for this. Lazily
+// loaded into globals.sshPortals on first use instead of at phantom
+// startup, so this stays self-contained.
+SshPortalsPath = "/root/ai/pt/sshportals.txt"
+
+// temporary debug prints — remove once the "doesn't survive a relaunch"
+// issue is actually found; harmless either way since sshlist/sshsave
+// already print plenty on their own
+LoadSshPortals = function()
+    globals.sshPortals = []
+    f = myComp.File(SshPortalsPath)
+    if not f then
+        print(c.grey + "DEBUG: sshportals: no file at " + SshPortalsPath + c.ennd)
+        return
+    end if
+    content = f.get_content
+    print(c.grey + "DEBUG: sshportals: get_content returned type " + typeof(content) + c.ennd)
+    if not content or content == "" then
+        print(c.grey + "DEBUG: sshportals: file exists but content is empty/null" + c.ennd)
+        return
+    end if
+    print(c.grey + "DEBUG: sshportals: read " + content.len + " byte(s) from " + SshPortalsPath + c.ennd)
+    loaded = 0
+    for line in content.split(char(10))
+        if line == "" then continue
+        line = line.replace(char(13), "")
+        // confirmed: GreyScript's split("|") is unreliable even when
+        // "|" genuinely appears in the string multiple times — a
+        // well-formed 5-field line ("beans|root|Ickle1|1.2.3.4|22")
+        // came back as 36 "fields" in testing, not 5. db.txt's own
+        // loader has never used split("|") for exactly this reason —
+        // it walks the line with indexOf("|", pos) + slicing instead,
+        // which is what this now does too.
+        p1 = line.indexOf("|")
+        if p1 == null then
+            print(c.grey + "DEBUG: sshportals: skipped malformed line (no |): " + line + c.ennd)
+            continue
+        end if
+        p2 = line.indexOf("|", p1 + 1)
+        p3 = null
+        p4 = null
+        if p2 != null then p3 = line.indexOf("|", p2 + 1)
+        if p3 != null then p4 = line.indexOf("|", p3 + 1)
+        if p2 == null or p3 == null or p4 == null then
+            print(c.grey + "DEBUG: sshportals: skipped malformed line (not 4 |'s): " + line + c.ennd)
+            continue
+        end if
+        name = line[:p1]
+        user = line[p1+1:p2]
+        pass = line[p2+1:p3]
+        ip   = line[p3+1:p4]
+        port = line[p4+1:]
+        globals.sshPortals.push({"name": name, "user": user, "pass": pass, "ip": ip, "port": port})
+        loaded = loaded + 1
+    end for
+    print(c.grey + "DEBUG: sshportals: loaded " + loaded + " portal(s)" + c.ennd)
+end function
+
+SaveSshPortals = function()
+    out = ""
+    for p in globals.sshPortals
+        out = out + p["name"] + "|" + p["user"] + "|" + p["pass"] + "|" + p["ip"] + "|" + p["port"] + char(10)
+    end for
+    f = myComp.File(SshPortalsPath)
+    if not f then
+        myComp.touch("/root/ai/pt", "sshportals.txt")
+        f = myComp.File(SshPortalsPath)
+    end if
+    if f and typeof(f) == "file" then
+        wr = f.set_content(out)
+        if typeof(wr) == "string" and wr != "" then
+            print(c.yellow + "<b>sshsave: write error: " + wr + c.ennd)
+        end if
+    else
+        print(c.yellow + "<b>sshsave: could not open " + SshPortalsPath + " for writing" + c.ennd)
+    end if
+end function
+
+FindSshPortal = function(name)
+    if not globals.hasIndex("sshPortals") then LoadSshPortals()
+    for p in globals.sshPortals
+        if p["name"] == name then return p
+    end for
+    return null
+end function
+
+// sshsave [name] [user@pass] [ip] [opt:port] — save your own login for
+// quick reconnect later via "ssh [name]" instead of retyping creds
+CmdSshSave = function(inp)
+    if inp.len < 4 then
+        print("<b>Usage: sshsave [name] [user@pass] [ip] [opt:port]")
+        print(c.grey + "  saves your own login for quick reconnect — ssh [name] later instead of retyping" + c.ennd)
+        return
+    end if
+    if not globals.hasIndex("sshPortals") then LoadSshPortals()
+    name  = inp[1]
+    creds = inp[2]
+    ip    = inp[3]
+    port  = "22"
+    if inp.len >= 5 then port = inp[4]
+    credParts = creds.split("@")
+    if credParts.len < 2 then
+        print(c.yellow + "<b>sshsave: creds must be user@pass" + c.ennd)
+        return
+    end if
+    entry = {"name": name, "user": credParts[0], "pass": credParts[1], "ip": ip, "port": port}
+    newList = []
+    for p in globals.sshPortals
+        if p["name"] != name then newList.push(p)
+    end for
+    newList.push(entry)
+    globals.sshPortals = newList
+    SaveSshPortals()
+    print(c.green + "<b>sshsave: saved '" + name + "' -> " + ip + ":" + port + c.ennd)
+end function
+CommandTable["sshsave"] = @CmdSshSave
+
+// sshlist — show every saved portal
+CmdSshList = function(inp)
+    if not globals.hasIndex("sshPortals") then LoadSshPortals()
+    if globals.sshPortals.len == 0 then
+        print(c.grey + "sshlist: no saved portals — use sshsave to add one" + c.ennd)
+        return
+    end if
+    print(c.cyan + "<b>SSH PORTALS  (" + globals.sshPortals.len + ")" + c.ennd)
+    for p in globals.sshPortals
+        print(c.gold + "  " + p["name"] + c.ennd + c.grey + "  " + p["user"] + "@" + p["pass"] + "  " + p["ip"] + ":" + p["port"] + c.ennd)
+    end for
+end function
+CommandTable["sshlist"] = @CmdSshList
+
+// sshdel [name] — remove a saved portal
+CmdSshDel = function(inp)
+    if inp.len != 2 then
+        print("<b>Usage: sshdel [name]")
+        return
+    end if
+    if not globals.hasIndex("sshPortals") then LoadSshPortals()
+    name = inp[1]
+    found = false
+    newList = []
+    for p in globals.sshPortals
+        if p["name"] == name then found = true else newList.push(p)
+    end for
+    globals.sshPortals = newList
+    SaveSshPortals()
+    if found then
+        print(c.green + "<b>sshdel: removed '" + name + "'" + c.ennd)
+    else
+        print(c.yellow + "<b>sshdel: not found: " + name + c.ennd)
+    end if
+end function
+CommandTable["sshdel"] = @CmdSshDel
+
+// ssh [user@pass] [ip] [opt:port]  |  ssh [saved-name]
+CmdSsh = function(inp)
+    if inp.len == 2 and inp[1].indexOf("@") == null then
+        portal = FindSshPortal(inp[1])
+        if not portal then
+            print(c.yellow + "<b>ssh: no saved portal named '" + inp[1] + "' — sshsave to add one, or use ssh [user@pass] [ip] [port]" + c.ennd)
+            return
+        end if
+        Ssh(portal["user"] + "@" + portal["pass"], portal["ip"], portal["port"], myShell)
+    else if inp.len == 3 then
+        Ssh(inp[1], inp[2], null, myShell)
+    else if inp.len == 4 then
+        Ssh(inp[1], inp[2], inp[3], myShell)
+    else
+        print("<b>Usage: ssh [user@pass] [ip] [opt:port]  |  ssh [saved-name]")
+    end if
+end function
+CommandTable["ssh"] = @CmdSsh
