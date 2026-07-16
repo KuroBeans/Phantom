@@ -2019,6 +2019,10 @@ CmdExit = function(inp)
         gcoExit = get_custom_object
         gcoExit.local = {"activeLib": globals.activeLib, "activeMx": globals.activeMx}
     end if
+    // batched db.txt write (see EdbAdd/FlushEdb in hack.src) hasn't run
+    // yet this command if exit/quit itself is what's ending the loop —
+    // flush explicitly so nothing found this command is lost
+    FlushEdb()
     exit
 end function
 CommandTable["exit"] = @CmdExit
@@ -2288,7 +2292,12 @@ CommandTable["leave"] = @CmdLeave
 // with globals.activeMx (claim -mx) if one's held, since a different
 // metaxploit.so copy can decode things the default one can't — falls
 // back to the one global metaxploit loaded at startup otherwise.
-// uselib [opt:inject] [opt:-l lanip] [opt:-c] [opt:-s]
+// uselib [opt:inject] [opt:-l lanip] [opt:-c] [opt:-s] [opt:-a]
+// -c: computer-ONLY — without it, only a shell result counts as a hit;
+// with it, only a computer counts (a shell result gets rejected, not
+// accepted alongside). Implies -a: stopping at the first computer
+// found isn't useful for discovery, so -c alone tries every candidate
+// and pushes every computer it lands, same as -a -c would.
 // -s: recon only — decode + record candidates to db.txt (unconfirmed,
 // blank type/user, same as scanlan's direct-ip mode) without ever
 // calling overflow(). Point of this: claim a lib mid-jump, come back
@@ -2299,7 +2308,29 @@ CommandTable["leave"] = @CmdLeave
 // A bare positional arg (no -l) still works the same way for backward
 // compat, -l just makes the intent explicit instead of "whatever
 // wasn't -c/-s must be the inject value."
+// -a: try every candidate instead of stopping at the first hit,
+// pushing every match found onto objectStack (like wstack) instead of
+// landing just one in globals.object — still only shells unless -c is
+// also given, in which case only computers.
+// -lib name: loadlib + uselib in one shot — loads that lib fresh from
+// this machine's own /lib into globals.activeLib before scanning,
+// instead of requiring a separate loadlib call first. Point of this:
+// jump, -lib load + attack in one command, quit, without a second
+// round trip through loadlib.
 CmdUselib = function(inp)
+    libIdx = inp.indexOf("-lib")
+    if libIdx != null and libIdx + 1 < inp.len then
+        libName = inp[libIdx + 1]
+        ml = metaxploit.load("/lib/" + libName)
+        if not ml then ml = metaxploit.load(libName)
+        if not ml then
+            print(c.yellow + "<b>uselib -lib: not found: " + libName + c.ennd)
+            globals.pipeFailed = true
+            return
+        end if
+        globals.activeLib = ml
+        print(c.lime + "<b>uselib -lib: loaded " + ml.lib_name + " " + ml.version + c.ennd)
+    end if
     if not globals.activeLib then
         print(c.yellow + "<b>uselib: no active lib — claim one first" + c.ennd)
         globals.pipeFailed = true
@@ -2316,7 +2347,7 @@ CmdUselib = function(inp)
     if lIdx != null and lIdx + 1 < inp.len then inject = inp[lIdx + 1]
     if not inject then
         for a in inp[1:]
-            if a != "-c" and a != "-s" and a != "-l" then inject = a
+            if a != "-c" and a != "-s" and a != "-l" and a != "-lib" and a != "-a" and not (libIdx != null and inp.indexOf(a) == libIdx + 1) then inject = a
         end for
     end if
     if inject then print(c.grey + "  bouncing via " + inject + c.ennd)
@@ -2353,11 +2384,46 @@ CmdUselib = function(inp)
         return
     end if
 
+    // -c now means computer-ONLY (shells get rejected), not "also
+    // accept a computer alongside a shell" — without -c, a shell is
+    // the only thing that counts as a hit, matching the original
+    // "computers need -c to opt in" convention exactly, just no longer
+    // letting a shell sneak through once -c is given
+    // -c also implies -a: stopping at the first computer isn't useful
+    // for a discovery flow, you want every option found, not just
+    // whichever candidate happened to land first
+    tryAll = inp.indexOf("-a") != null or acceptComputer
+    if tryAll then
+        pushed = 0
+        for pair in pairs
+            if inject then obj = ml.overflow(pair[0], pair[1], inject) else obj = ml.overflow(pair[0], pair[1])
+            t = typeof(obj)
+            EdbAdd(ml.lib_name, ml.version, pair[0], pair[1], t, "")
+            matched = false
+            if acceptComputer then matched = t == "computer" else matched = t == "shell"
+            if matched then
+                objectStack.push(obj)
+                pushed = pushed + 1
+                print(c.green + "  [+] " + t + " via " + pair[0] + " " + pair[1] + " → stack [" + objectStack.len + "]" + c.ennd)
+            end if
+        end for
+        if pushed == 0 then
+            print(c.yellow + "<b>uselib -a: no working exploit" + c.ennd)
+            globals.pipeFailed = true
+        else
+            print(c.cyan + "<b>uselib -a: " + pushed + " object(s) pushed to stack" + c.ennd)
+            globals.pipeFailed = false
+        end if
+        return
+    end if
+
     for pair in pairs
         if inject then obj = ml.overflow(pair[0], pair[1], inject) else obj = ml.overflow(pair[0], pair[1])
         t = typeof(obj)
         EdbAdd(ml.lib_name, ml.version, pair[0], pair[1], t, "")
-        if t == "shell" or (t == "computer" and acceptComputer) then
+        matched = false
+        if acceptComputer then matched = t == "computer" else matched = t == "shell"
+        if matched then
             globals.object = obj
             globals.remotePath = "/"
             print(c.lime + "<b>uselib: " + t + " via " + pair[0] + " " + pair[1] + c.ennd)
@@ -2365,7 +2431,7 @@ CmdUselib = function(inp)
             return
         end if
     end for
-    print(c.yellow + "<b>uselib: no working exploit (use -c to accept a computer)" + c.ennd)
+    print(c.yellow + "<b>uselib: no working exploit" + c.ennd)
     globals.pipeFailed = true
 end function
 CommandTable["uselib"] = @CmdUselib
@@ -2401,5 +2467,3 @@ myShell.scp(lsBin, "/home/guest", object)
 object.launch("/home/guest/ScanLan.exe")
 end function
 CommandTable["admin"] = @CmdAdminMonitor
-
-
