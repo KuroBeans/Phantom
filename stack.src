@@ -117,6 +117,7 @@ CmdStackrun = function(inp)
         print(c.white + "<b>file ops (work on shell + computer objects):" + c.ennd)
         print(c.grey + "  ls [path]                  list a folder (default /)" + c.ennd)
         print(c.grey + "  tree [path] [depth]        recursive listing (default / depth 3)" + c.ennd)
+        print(c.grey + "  find <pattern> [path]      recursively find files/folders by name (default /)" + c.ennd)
         print(c.grey + "  read <file>                print a file's contents" + c.ennd)
         print(c.grey + "  write <file> <text...>     overwrite a file with text" + c.ennd)
         print(c.grey + "  rm [-r] <path>             delete a file/folder" + c.ennd)
@@ -138,6 +139,7 @@ CmdStackrun = function(inp)
     else
         sub = inp[1]
         i = 1
+        findResults = []
         for obj in objectStack
             if typeof(obj) == "shell" then
                 sComp = obj.host_computer
@@ -417,6 +419,16 @@ CmdStackrun = function(inp)
                     end if
                 end while
 
+            else if sub == "find" then
+                if inp.len < 3 then
+                    print(c.yellow + "  usage: find <pattern> [path]" + c.ennd)
+                else
+                    findPath = "/"
+                    if inp.len >= 4 then findPath = inp[3]
+                    total = RFind(inp[2], findPath, obj, findResults)
+                    print(c.cyan + "  " + total + " result(s)" + c.ennd)
+                end if
+
             else if sub == "name" then
                 print(c.white + "  " + sComp.get_name + c.ennd)
 
@@ -525,6 +537,9 @@ CmdStackrun = function(inp)
 
             i = i + 1
         end for
+        if sub == "find" and findResults.len > 0 then
+            globals.pipeResult = findResults.join(",")
+        end if
         div
         print(c.cyan + "stackrun complete across " + objectStack.len + " object(s)" + c.ennd)
     end if
@@ -880,8 +895,6 @@ CmdTreegrep = function(inp)
     end if
 end function
 CommandTable["treegrep"] = @CmdTreegrep
-
-
 
 
 // ================================================================
@@ -1353,5 +1366,3 @@ CmdAppend = function(inp)
     print(c.lime + "  replaced line " + lineNum + " in " + filePath + c.ennd)
 end function
 CommandTable["append"] = @CmdAppend
-
-
