@@ -348,17 +348,6 @@ CmdUnset = function(inp)
 end function
 CommandTable["unset"] = @CmdUnset
 
-CmdSsh = function(inp)
-    if inp.len == 3 then
-        Ssh(inp[1], inp[2], null, myShell)
-    else if inp.len == 4 then
-        Ssh(inp[1], inp[2], inp[3], myShell)
-    else
-        print("<b>Usage: ssh [user@pass] [ip] [opt:port]")
-    end if
-end function
-CommandTable["ssh"] = @CmdSsh
-
 CmdScp = function(inp)
     if inp.len >= 4 then Scp(inp[1], inp[2], inp[3]) else print("<b>Usage: scp [-u|-d] [src] [dst]")
 end function
@@ -1635,11 +1624,7 @@ Scan = function(ip, port, comp, inject, libName)
 
         // ── LAN IP: bounce through held shell via nested launch ───
         if is_lan_ip(ip) then
-            if typeof(globals.object) != "shell" then
-                print(c.yellow + "<b>scan: need a remote shell to scan LAN IPs" + c.ennd)
-                globals.pipeFailed = true
-                return
-            end if
+
             if not EnsureLanPath(ip) then
                 globals.pipeFailed = true
                 return
@@ -1714,12 +1699,13 @@ Scan = function(ip, port, comp, inject, libName)
 		print(char(10))
 		return
 	end if
-	
+	end if
+
+    matches = []
     if dbFile and typeof(dbFile) == "file" then
         content = dbFile.get_content
-		
+
         if content and content != "" then
-            matches = []
             for line in content.split(char(10))
                 if line == "" then continue
                 line = line.replace(char(13), "")
@@ -1748,6 +1734,7 @@ Scan = function(ip, port, comp, inject, libName)
                     matches.push({"mem": memAddr, "val": valStr})
                 end if
             end for
+        end if
         if matches.len > 0 then
             print(c.green + "  edb hit: " + matches.len + " known exploit(s) for " + metalib.lib_name + " " + metalib.version + " - trying stored exploits" + c.ennd)
             shells = 0
@@ -2105,36 +2092,6 @@ Grab = function(ip, port, mem, val, inject, acceptComputer)
             // ever shows up so we can see the actual type
             if typeof(globals.object) == "firewall" then print("test: firewall disable returned")
         end if
-    end if
-end function
-
-// -- SSH ----------------------------------------------------------
-Ssh = function(creds, ip, port, comp)
-    parts = creds.split("@")
-    if parts.len < 2 then
-        print(c.yellow + "<b>ssh: usage: ssh [user@pass] [ip] [opt:port]" + c.ennd)
-        return
-    end if
-    user = parts[0]
-    pass = parts[1]
-    portInt = 22
-    if port then portInt = port.to_int
-    if typeof(portInt) != "number" then
-        print(c.yellow + "<b>ssh: invalid port" + c.ennd)
-        return
-    end if
-    print("Connecting to " + ip + ":" + portInt + " ...")
-    shell = comp.connect_service(ip, portInt, user, pass, "ssh")
-    if typeof(shell) == "string" then
-        print(c.yellow + shell + c.ennd)
-        return
-    end if
-    if shell then
-        globals.object = shell
-        globals.remotePath = "/"
-        print(c.cyan + "<b>shell obtained: " + ip + c.ennd)
-    else
-        print(c.yellow + "<b>ssh: connection failed" + c.ennd)
     end if
 end function
 
@@ -2907,7 +2864,10 @@ ShowHelp = function(flag)
         print(c.yellow+"<b>ifconfig</b>"+c.ennd+"   ifconfig")
         print(c.yellow+"<b>set</b>"+c.ennd+"        set [ip] [opt:-b]")
         print(c.yellow+"<b>unset</b>"+c.ennd+"      unset [-p] [-l] [-b] [-a]")
-        print(c.yellow+"<b>ssh</b>"+c.ennd+"        ssh [user@pass] [ip] [opt:port]")
+        print(c.yellow+"<b>ssh</b>"+c.ennd+"        ssh [user@pass] [ip] [opt:port]  |  ssh [saved-name]")
+        print(c.yellow+"<b>sshsave</b>"+c.ennd+"    sshsave [name] [user@pass] [ip] [opt:port]  (save your own login for quick reconnect)")
+        print(c.yellow+"<b>sshlist</b>"+c.ennd+"    sshlist  (show saved portals)")
+        print(c.yellow+"<b>sshdel</b>"+c.ennd+"     sshdel [name]  (remove a saved portal)")
         print(c.yellow+"<b>scp</b>"+c.ennd+"        scp [-u|-d] [src] [dst]")
         print(c.yellow+"<b>routerdata</b>"+c.ennd+"  routerdata [ip] [opt:port]")
         print(c.yellow+"<b>proxy</b>"+c.ennd+"      proxy [hops]  (build anonymous chain)")
@@ -2930,8 +2890,16 @@ ShowHelp = function(flag)
         print(c.yellow+"<b>harvest</b>"+c.ennd+"    harvest  (crack Mail.txt + Bank.txt)")
         print(c.yellow+"<b>wifi</b>"+c.ennd+"       wifi  (scan + crack nearby WiFi networks)")
         print(c.yellow+"<b>siphon</b>"+c.ennd+"     siphon [opt:-a/-b/-m/-p/-l/-n]  (network-wide harvest)")
-        print(c.yellow+"<b>wstack</b>"+c.ennd+"     wstack [opt:-l] [opt:libname]  (bounce LAN, push computers to stack)")
-        print(c.grey+"              libname defaults to init.so, falls back to libhttp.so if missing"+c.ennd)
+        print(c.yellow+"<b>wstack</b>"+c.ennd+"     wstack [opt:-l] [opt:libname]  (bounce LAN, push ROOT computers to stack)")
+        print(c.grey+"              no -l: uploads + launches on the held shell so you don't have to jump first"+c.ennd)
+        print(c.grey+"              (confirmed: LAN visibility from outside a network is much more limited than"+c.ennd)
+        print(c.grey+"              from a script running inside it, so this isn't just convenience)"+c.ennd)
+        print(c.grey+"              -l: run inline instead (like uselib) — you must already be positioned here"+c.ennd)
+        print(c.grey+"              no libname given: uses globals.activeLib if one's claimed/loaded, else"+c.ennd)
+        print(c.grey+"              defaults to init.so, falling back to libhttp.so if missing"+c.ennd)
+        print(c.grey+"              whatever lib actually gets used lands in globals.activeLib too (like scanlib)"+c.ennd)
+        print(c.grey+"              tries every candidate per device — only a root-level computer counts as a"+c.ennd)
+        print(c.grey+"              hit, a guest-only bounce is discarded instead of settled for"+c.ennd)
         print(c.yellow+"<b>cascade</b>"+c.ennd+"    cascade  (wstack from every shell on stack simultaneously)")
         print(c.yellow+"<b>lanenum</b>"+c.ennd+"    lanenum [opt:-l] [opt:@var]  (list LAN IPs, clip to @var)")
         print(c.grey+"              -l: enumerate locally instead of via a held remote shell (e.g. after jump)"+c.ennd)
@@ -2946,9 +2914,32 @@ ShowHelp = function(flag)
         print(c.yellow+"<b>buildrt</b>"+c.ennd+"    build rainbow table in memory")
         print(c.yellow+"<b>rtgen</b>"+c.ennd+"      rtgen  (build + write rainbow table to ~/rt/)")
         print(c.yellow+"<b>crack</b>"+c.ennd+"      crack [hash]")
-        print(c.yellow+"<b>jump</b>"+c.ennd+"       jump [opt:--rshell]  (copy phantom to target)")
-        print(c.yellow+"<b>leave</b>"+c.ennd+"      leave  |  leave -lib [name]  (leave held shell/computer, or a lib name, for another phantom session to claim)")
+        print(c.yellow+"<b>jump</b>"+c.ennd+"       jump [opt:--rshell] [opt:-b|--bin] [opt:--loadlib name]  (copy phantom to target)")
+        print(c.grey+"              -b/--bin: copy just the phantom binary, not the whole tp folder — if that flag"+c.ennd)
+        print(c.grey+"              misbehaves, jumpbin does the same thing with no flag parsing at all"+c.ennd)
+        print(c.grey+"              --loadlib name: target auto-loads that lib from ITS OWN /lib and exits"+c.ennd)
+        print(c.grey+"              immediately, no interactive prompt — chain with |> uselib ... for a full"+c.ennd)
+        print(c.grey+"              jump+load-remote-lib+bring-home+attack in one command. implies -b/--bin"+c.ennd)
+        print(c.yellow+"<b>jumpbin</b>"+c.ennd+"    jumpbin [opt:--loadlib name]  (dedicated bin-only jump, no flags — see jump -b above)")
+        print(c.yellow+"<b>leave</b>"+c.ennd+"      leave  |  leave -lib [name] [opt:port]  (leave held shell/computer, or a lib name, for another phantom session to claim)")
+        print(c.grey+"              -lib auto-captures the held shell's ip if you're holding one, so claim can redial +"+c.ennd)
+        print(c.grey+"              dump_lib on the far end if the lib isn't sitting in /lib there as an actual file"+c.ennd)
         print(c.yellow+"<b>claim</b>"+c.ennd+"      claim  (pick up whatever leave left — shell/computer lands in object, a lib gets loaded fresh into globals.activeLib)")
+        print(c.yellow+"<b>loadlib</b>"+c.ennd+"    loadlib [name]  |  loadlib -c  (load a local lib straight into globals.activeLib, or clear it)")
+        print(c.yellow+"<b>loadmx</b>"+c.ennd+"     loadmx [opt:path]  |  loadmx -c  (load a local metaxploit.so into globals.activeMx, or clear it)")
+        print(c.grey+"              run before jump/jumpbin so uselib scans with YOUR metaxploit on the far end"+c.ennd)
+        print(c.yellow+"<b>libvers</b>"+c.ennd+"    libvers  (list every lib in this machine's own /lib with its version)")
+        print(c.yellow+"<b>uselib</b>"+c.ennd+"     uselib [opt:inject] [opt:-l lanip] [opt:-c] [opt:-s] [opt:-a]  (scan/exploit with globals.activeLib)")
+        print(c.grey+"              -c: computer-ONLY — without it, only a shell counts as a hit; with it,"+c.ennd)
+        print(c.grey+"                  only a computer does (a shell result gets rejected, not accepted too)."+c.ennd)
+        print(c.grey+"                  implies -a: tries every candidate, pushes every computer found"+c.ennd)
+        print(c.grey+"              -s: recon only, banks candidates to db.txt without calling overflow()"+c.ennd)
+        print(c.grey+"              -l lanip: bounce onto a LAN device (same as a bare positional inject arg)"+c.ennd)
+        print(c.grey+"              -a: try every candidate, push every match found to the stack (still"+c.ennd)
+        print(c.grey+"                  shells-only unless -c is also given)"+c.ennd)
+        print(c.grey+"                  (default stops at the first hit, lands it in globals.object)"+c.ennd)
+        print(c.yellow+"<b>activelib</b>"+c.ennd+"  activelib  (debug: show what's held in globals.activeLib)")
+        print(c.yellow+"<b>libdebug</b>"+c.ennd+"   libdebug [opt:-c]  (debug: show/clear gco.claimLib)")
         print(c.yellow+"<b>plant</b>"+c.ennd+"      plant [opt:lib] [opt:dest]  (upload lib from /root/InsecureLibs)")
         print(c.yellow+"<b>rshell</b>"+c.ennd+"     rshell  |  rshell start/stop/init/infect/info")
     end if
@@ -2987,8 +2978,6 @@ ShowHelp = function(flag)
         print(c.grey + "  push/pop/stack/swap -> juggle multiple objects" + c.ennd)
         print(c.grey + "  cover               -> clean up traces" + c.ennd)
     end if
-	if flag == "" or flag == "-m" then
-		
 end function
 
 // -- Markov Password Generator -------------------------------------
@@ -3533,7 +3522,7 @@ end function
 
 // ── RFind ────────────────────────────────────────────────────────
 // Find files/folders by name pattern recursively
-RFind = function(pattern, path, obj)
+RFind = function(pattern, path, obj, matchList = null)
     comp = null
     if typeof(obj) == "shell" then comp = obj.host_computer
     if typeof(obj) == "computer" then comp = obj
@@ -3557,6 +3546,7 @@ RFind = function(pattern, path, obj)
             if f.is_folder then icon = "/"
             print(c.gold + f.path + icon + c.ennd)
             found = found + 1
+            if matchList != null then matchList.push(f.path)
         end if
         if f.is_folder then
             queue = queue + f.get_files + f.get_folders
