@@ -16,9 +16,18 @@
 // Results:
 //   gco.lsResults / gco.lsCount           — every candidate tried, mem/val/outcome
 //   gco.lsObj / lsObjType / lsMem / lsVal — first working exploit, if any
+//   gco.lsLibObj                          — the loaded lib itself (live
+//                                            handle), regardless of
+//                                            whether overflow ever
+//                                            succeeded — lets the caller
+//                                            (LibScan, hack.src) drop it
+//                                            straight into
+//                                            globals.activeLib, same
+//                                            as loadlib does locally
 
 gco = get_custom_object
 
+gco.lsLibObj  = null
 gco.lsObj     = null
 gco.lsObjType = ""
 gco.lsMem     = ""
@@ -77,6 +86,7 @@ if not ml then
     exit
 end if
 
+gco.lsLibObj  = ml
 gco.lsLibName = ml.lib_name
 gco.lsLibVer  = ml.version
 gco.lsDebug   = "lib: " + ml.lib_name + " " + ml.version
