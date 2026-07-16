@@ -167,7 +167,7 @@ end if
 // gco.edb is plain data handed in by the caller (see ScanLanBounce) —
 // db.txt-known mem/val pairs for this exact lib+version, same shortcut
 // ScanLan/grab already get on the direct-ip path (KnownExploits in
-// core.src). Try these directly before the slow mx.scan()/
+// hack.src). Try these directly before the slow mx.scan()/
 // scan_address() decode pass instead of always re-discovering the
 // same candidates on every LAN target running this lib+version.
 knownPairs = []
