@@ -787,7 +787,7 @@ EdbAdd = function(libName, libVer, memAddr, valStr, objType="", userCtx="")
                 ex["user"] = userCtx
                 changed = true
             end if
-            if changed then EdbSave()
+            if changed then globals.edbDirty = true
             return
         end if
     end for
@@ -799,7 +799,19 @@ EdbAdd = function(libName, libVer, memAddr, valStr, objType="", userCtx="")
     entry["type"] = objType
     entry["user"] = userCtx
     globals.edb.push(entry)
+    globals.edbDirty = true
+end function
+
+// batched db.txt write — EdbAdd only flags globals.edbDirty instead of
+// writing on every single call, since a command like scan/grab/wstack/
+// report can call EdbAdd many times in one run (once per candidate
+// tried). phantom.src's main loop calls this once after every command
+// dispatch instead, so a run with N candidates costs one disk write,
+// not N.
+FlushEdb = function()
+    if not globals.hasIndex("edbDirty") or not globals.edbDirty then return
     EdbSave()
+    globals.edbDirty = false
 end function
 ExploitDB = function(args)
     if globals.edb == null then globals.edb = []
@@ -2242,7 +2254,7 @@ ProxyWithChainSaw = function(hops)
             else
                 print(c.grey + "  Launching ChainSaw..." + c.ennd)
                 final.launch(rcePath + "/" + rceName)
-               
+                wait(4)
 
                 g = get_custom_object
                 if g.hasIndex("chainsaw") and g.chainsaw != null and g.chainsaw.shell != null then
