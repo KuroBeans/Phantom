@@ -95,6 +95,14 @@ endif
 | `computer` | held object is a computer |
 | `object` | anything at all is held |
 | `stack` | the object stack has at least one entry |
+| `stackanyroot` | at least one object on the stack currently has root (checks every item, not just the held one — false on an empty stack) |
+| `stackallroot` | every object on the stack currently has root (false on an empty stack — no vacuous truth) |
+| `stackanyguest` | at least one object on the stack does *not* have root |
+| `stackallguest` | none of the objects on the stack have root |
+| `stackanycomputer` | at least one object on the stack is a `computer` (false on an empty stack) |
+| `stackallcomputer` | every object on the stack is a `computer` |
+| `stackanyshell` | at least one object on the stack is a `shell` |
+| `stackallshell` | every object on the stack is a `shell` |
 | `target` (or `pt`) | a public target is set |
 | `failed` (or `pipefailed`) | the last pipeline step failed |
 | `@var` | the clip is set and non-empty |
@@ -102,10 +110,28 @@ endif
 
 Prefix any condition with `not` (or `no`) to negate it. Conditions also support comparisons: `stack >= 3`, `shell == root`, `object == null`, `@count == 5`, etc.
 
+**Comparing against a stack snapshot.** `stack | clip @a` captures the *live* objects currently on the stack into an object-list clip (see the README's "Object-list clips" section). Later on, `stack == @a` / `stack != @a` (and `<`/`>`/`<=`/`>=` too) compare the *current* stack's count against however many objects `@a` captured — same as comparing against a plain number, just sourced from the clip instead of typed literally. That only checks size, though — two different targets swapped in place would still count as "unchanged." For that, `stackchanged @a` (or `not stackchanged @a`) compares the actual objects on the stack, position by position, against what `@a` captured — true if anything differs, false only if it's the exact same objects in the exact same order. A clip that was never taken counts as "changed" for `stackchanged`, and as `0` for the count comparison.
+
+```
+stack | clip @a
+autoroot -l
+if stackchanged @a then echo "stack composition changed"
+if stack != @a then echo "stack size changed (could be same objects reordered though)"
+```
+
 Combine with `and`/`or` (no parentheses, evaluated left to right by whichever operator appears first):
 ```
 if root and stack >= 1 then autoharvest
 ```
+
+**Checking the stack for a match without jumping to it.** `stackpick <condition>` (see the Stack command reference in the README) finds the first stack object matching `<condition>` and makes it the held object — useful when you actually want to *act* on the match. But that's a side effect you don't always want inside a plain `if` — sometimes you just need to know whether a match exists. `stackhas <condition>` is the pure boolean version: same condition matching (anything `EvalCondition` supports — `computer`, `shell == root`, `and`/`or` chains, whatever), but it never touches the currently held object, win or lose:
+
+```
+if stackhas computer and shell == root then echo "there's a rooted computer somewhere on the stack"
+// object is completely untouched here either way — use stackpick instead if you actually want to grab it
+```
+
+`stackanyroot`/`stackanycomputer`/etc. above are really just `stackhas` pre-built for those specific, common checks — reach for the plain keyword when it fits, `stackhas` when you need something those don't already cover.
 
 ## Loops
 
