@@ -1,0 +1,38 @@
+me = get_shell
+mycomp = me.host_computer
+if mycomp.File("/root/ai") == null then
+	mycomp.create_folder("/root", "ai")
+	print("ai folder now in exsistence!")
+	else
+	print("ai exsisty")
+end if
+
+if mycomp.File("/root/ai/tp") == null then
+	mycomp.create_folder("/root/ai", "tp")
+	print("/root/ai/tp folder now in exsistence!")
+	else
+	print("tp exsisty")
+end if
+
+if mycomp.File("/root/ai/pt") == null then
+	mycomp.create_folder("/root/ai", "pt")
+	print("/root/ai/pt folder now in exsistence!")
+	else
+	print("pt exsisty")
+end if
+
+if mycomp.File("/root/ai/rsh") == null then
+	mycomp.create_folder("/root/ai", "rsh")
+	print("/root/ai/rsh folder now in exsistence!")
+	else
+	print("rsh exsisty")
+end if
+
+if mycomp.File("/root/ai/mac") == null then
+	mycomp.create_folder("/root/ai", "mac")
+	print("/root/ai/mac folder now in exsistence!")
+	else
+	print("mac exsisty")
+end if
+
+
