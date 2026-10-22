@@ -35,4 +35,62 @@ if mycomp.File("/root/ai/mac") == null then
 	print("mac exsisty")
 end if
 
+if mycomp.File("/root/ai/tp/hack.src") == null then
+	mycomp.touch("/root/ai", "hack.src")
+	print("hack.src now exists")
+	else
+	print("hack.src already exists")
+end if
+
+if mycomp.File("/root/ai/tp/macro.src") == null then
+	mycomp.touch("/root/ai", "macro.src")
+	print("macro.src now exists")
+	else
+	if mycomp.File("/root/ai/tp/macro.src") != null then print("macro.src already exists")
+end if
+
+if mycomp.File("/root/ai/tp/ops.src") == null then
+	mycomp.touch("/root/ai", "ops.src")
+	print("macro.src now exists")
+	else
+	if mycomp.File("/root/ai/tp/ops.src") != null then print("ops.src already exists")
+end if
+
+i
+
+if mycomp.File("/root/ai/tp/remote.src") == null then
+	mycomp.touch("/root/ai", "remote.src")
+	print("macro.src now exists")
+	else
+	if mycomp.File("/root/ai/tp/remote.src") != null then print("remote.src already exists")
+end if
+
+if mycomp.File("/root/ai/tp/phantom.src") == null then
+	mycomp.touch("/root/ai", "phantom.src")
+	print("macro.src now exists")
+	else
+	if mycomp.File("/root/ai/tp/phantom.src") != null then print("phantom.src already exists")
+end if
+
+
+if mycomp.File("/root/ai/tp/game.src") == null then
+	mycomp.touch("/root/ai", "game.src")
+	print("macro.src now exists")
+	else
+	if mycomp.File("/root/ai/tp/game.src") != null then print("game.src already exists")
+end if
+
+if mycomp.File("/root/ai/tp/chainsaw.src") == null then
+	mycomp.touch("/root/ai", "chainsaw.src")
+	print("macro.src now exists")
+	else
+	if mycomp.File("/root/ai/tp/chainsaw.src") != null then print("chainsaw.src already exists")
+end if
+
+if mycomp.File("/root/ai/tp/phantom.src") == null then
+	mycomp.touch("/root/ai", "phantom.src")
+	print("macro.src now exists")
+	else
+	if mycomp.File("/root/ai/tp/phantom.src") != null then print("phantom.src already exists")
+end if
 
